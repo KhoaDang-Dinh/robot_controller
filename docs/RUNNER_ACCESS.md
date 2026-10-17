@@ -14,12 +14,15 @@ or deployment. Failed assumption or unexpected caller identity stops the job.
 2. Apply infra/environments/dev/access using the existing access backend/state.
    Existing runner_role_arn is trusted by default. Set robot_controller_runner_role_arn
    when the app uses a different externally supplied runner IAM role.
-3. Set robot_controller GitHub environment dev variables:
-   AWS_REGION and DEV_DEPLOY_ROLE (the robot_controller_dev_role_arn Terraform output).
-   The role ARN is also published at
+3. Set only AWS_REGION in robot_controller's GitHub environment dev.
+   Before checkout, the runner uses its source identity to read the exact SSM parameter
    /robot-sim/dev/access/robot-controller-deploy-role-arn.
-   The variable is the bootstrap pointer so the workflow can assume the role before
-   reading application discovery configuration.
+   It validates the returned role name, account and partition against its caller identity,
+   then assumes that role. DEV_DEPLOY_ROLE is no longer required.
+   Missing/inaccessible parameters or unexpected ARNs fail the workflow; there is no
+   guessed role or admin deployment fallback. Apply the access root first to publish it.
+   This read-only discovery plus STS role assumption is the only bootstrap use of the
+   runner source identity. Application operations run under the scoped dev role.
 4. Apply dev/base, then start/reapply dev/eks-runtime. Runtime reads that role ARN from
    SSM and creates its EKS access entry plus namespace-scoped AmazonEKSEditPolicy
    association. The updated runtime-start workflow creates robot-hello and robot-platform.
