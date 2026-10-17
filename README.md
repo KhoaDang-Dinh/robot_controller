@@ -35,3 +35,7 @@ this manual one-shot Job, avoiding a second owner recreating it.
 
 Next: Isaac startup -> UR10 simulated motion -> telemetry -> checkpoint recovery ->
 multi-worker recovery. This test proves only scheduling, image pull and execution.
+
+## Infrastructure discovery through SSM
+
+See [Terraform-managed SSM contract](docs/SSM_CONTRACT.md) for the shared interface.
