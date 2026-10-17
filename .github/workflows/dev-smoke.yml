@@ -37,7 +37,7 @@ jobs:
           if role != expected:
               raise SystemExit('Refusing unexpected role ARN from SSM')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-              output.write(f'role_arn={role}\\n')
+              output.write(f'role_arn={role}\n')
           print(f'Discovered dev deployment role from {parameter}')
           PY
       - name: Exchange runner identity for app dev role
