@@ -56,10 +56,7 @@ def main():
             "--kubeconfig", kubeconfig, "--alias", "robot-hello-ssm")
         env = {**os.environ, "KUBECONFIG": kubeconfig}
         kubectl = ["kubectl", "--context", "robot-hello-ssm", "--request-timeout=20s"]
-        namespace = {"apiVersion": "v1", "kind": "Namespace",
-                     "metadata": {"name": contract["hello_namespace"]}}
-        subprocess.run(kubectl + ["apply", "-f", "-"], input=json.dumps(namespace),
-                       text=True, env=env, check=True, timeout=60)
+        # Infrastructure pre-creates namespaces; app access is namespace-scoped.
         # Non-secret resource discovery is materialized for future workloads.
         config = {"apiVersion": "v1", "kind": "ConfigMap",
                   "metadata": {"name": "robot-platform-contract", "namespace": contract["hello_namespace"]},
