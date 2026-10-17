@@ -39,3 +39,11 @@ multi-worker recovery. This test proves only scheduling, image pull and executio
 ## Infrastructure discovery through SSM
 
 See [Terraform-managed SSM contract](docs/SSM_CONTRACT.md) for the shared interface.
+
+## Repository responsibility
+
+This repository owns application code/Dockerfiles, Helm, workload Argo CD Applications
+and environment configuration, release/rollback procedures, checkpoint compatibility
+and migrations, and start/save/resume release smoke tests.
+
+See [the ownership contract and migration status](docs/BASELINE.md#application-ownership-contract).

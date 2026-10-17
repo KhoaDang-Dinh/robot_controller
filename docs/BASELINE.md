@@ -5,7 +5,7 @@
 | Owner | Responsibility | Lifetime |
 |---|---|---|
 | infra_robot_sim | Terraform, AWS IAM/network/storage/EKS, cluster bootstrap, runtime start/stop | Persistent base + disposable runtime |
-| robot_controller | New workload examples, Kubernetes workload configuration, future robot application | Versioned software; disposable Jobs |
+| robot_controller | Application code/images, Helm, workload GitOps/environments, releases/rollback, checkpoint migrations and recovery smoke tests | Versioned application lifecycle |
 | Operator | Existing EC2 runner/profile and Terraform state bucket | External; never removed by Hello World |
 | S3 + DynamoDB | Application checkpoint payloads and committed progress | Retained across runtime loss |
 | SSM | Resource discovery/configuration | Persistent; not Terraform state |
@@ -26,6 +26,45 @@ This baseline does not move or duplicate that running controller. New workload o
 starts in robot_controller. Migrate the existing controller in a separate reviewed change,
 then change its Argo source once; never let two Applications own the same objects.
 The existing Argo Application still tracks infra_robot_sim/dev.
+
+## Application ownership contract
+
+robot_controller owns the complete application delivery and recovery lifecycle:
+
+1. Application code and Dockerfiles.
+2. The application Helm chart.
+3. Workload Argo CD Applications and environment configuration.
+4. Release and rollback procedures.
+5. Checkpoint compatibility validation and migration code.
+6. Release smoke tests that verify start, save, process replacement and resume.
+
+infra_robot_sim owns Terraform, AWS resources and IAM, EKS and node lifecycle,
+cluster-wide add-ons (including installation of Argo CD/Cilium), and publication of
+the versioned SSM infrastructure contract. robot_controller consumes that contract.
+Installing the Argo CD service belongs to infra; declaring the robot application's
+desired version and Helm values belongs to robot_controller. An infra bootstrap
+may reference the app entry point without becoming a second owner of app resources.
+
+Application release records must pin the image digest, chart/configuration revision
+and supported checkpoint schema versions. Rollback must check checkpoint compatibility:
+reverting an image alone does not make newer checkpoint data readable by older code.
+Migration must preserve the original checkpoint, produce a new versioned artifact and
+validate it before committing the new resume pointer. Unsupported versions fail clearly.
+
+The required recovery smoke test starts release A, saves a committed checkpoint,
+terminates/replaces the worker, then proves resumed progress from that checkpoint.
+For release B, verify supported migration/restore and the documented rollback path.
+Logs or Kubernetes Job completion alone are not evidence of checkpoint recovery.
+
+### Implementation status and migration boundary
+
+This is the ownership target, not a claim that all six areas are implemented.
+The current robot_controller baseline has CPU Hello World and SSM discovery tests.
+The existing controller, Dockerfile, Helm chart, Argo Application and checkpoint helpers
+remain in infra_robot_sim until migrated with their build/promotion references and tests.
+Migrate application behavior; retain AWS infrastructure lifecycle handlers in infra.
+Preserve a single Argo owner during cutover and avoid pruning live resources accidentally.
+The existing stateless Hello World is not yet the required start/save/resume release test.
 
 ## Runtime behavior (dynamic architecture)
 
