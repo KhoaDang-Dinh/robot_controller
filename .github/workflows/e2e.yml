@@ -61,17 +61,25 @@ jobs:
         run: |
           uv run python scripts/e2e_kind_recovery.py --image "$IMAGE" \
             --host-endpoint "http://127.0.0.1:$EMULATOR_PORT" \
-            --pod-endpoint "$POD_ENDPOINT" --logs e2e-logs
+            --pod-endpoint "$POD_ENDPOINT" --logs e2e-logs 2>&1 | tee e2e-driver.log
       - name: Usage report from Pod telemetry
         if: always()
         run: |
           cat e2e-logs/*.jsonl 2>/dev/null | uv run python scripts/usage_report.py --format markdown >> "$GITHUB_STEP_SUMMARY" || true
-      - name: Diagnostics
+      - name: Diagnostics (as annotations, readable from the checks API)
         if: failure()
         run: |
-          kubectl get all -A || true
-          kubectl -n robot-platform describe pods || true
-          tail -n 100 moto.log || true
+          note() {
+            local title="$1"; shift
+            local body; body="$("$@" 2>&1 | tail -c 3500)"
+            body="${body//'%'/'%25'}"; body="${body//$'\r'/'%0D'}"; body="${body//$'\n'/'%0A'}"
+            echo "::error title=${title}::${body}"
+          }
+          note "e2e driver output" cat e2e-driver.log
+          note "pods" kubectl get pods -A -o wide
+          note "robot-platform events" kubectl -n robot-platform get events --sort-by=.lastTimestamp
+          note "workload logs" kubectl -n robot-platform logs -l app.kubernetes.io/name=resume-smoke --all-containers --prefix --tail=30
+          note "emulator log" tail -n 40 moto.log
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
         with:
