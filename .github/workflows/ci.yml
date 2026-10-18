@@ -32,17 +32,22 @@ jobs:
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is Isaac Sim 5.1's interpreter (training image); 3.12 the CPU image.
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python }}
       - run: python -m pip install "uv==${UV_VERSION}"
       - name: Lockfile is up to date with pyproject.toml
         run: uv lock --check
-      - run: uv sync --locked
+      - run: uv sync --locked --python "${{ matrix.python }}"
       - name: Shared GHCR registry
         run: uv run python scripts/check_registry.py
       - name: Unit, compat (golden checkpoints) and dynamic tests
@@ -88,6 +93,27 @@ jobs:
             --set image.digest="$DIGEST" --set-file experiment=experiments/smoke-resume.yaml > /tmp/cpu.yaml
           if grep -q 'nvidia.com/gpu' /tmp/cpu.yaml; then echo 'CPU experiment requested a GPU' >&2; exit 1; fi
           grep -q 'robot-sim/capacity-type: "cpu"' /tmp/cpu.yaml
+      - name: Isaac Lab experiment needs the EULA opt-in and the Isaac Lab image
+        run: |
+          ISAAC="--set enabled=true --set job.id=ci-ur10 --set image.digest=$DIGEST --set-file experiment=experiments/ur10-reach-ppo.yaml"
+          # shellcheck disable=SC2086
+          if helm template smoke charts/robot-sim $ISAAC --set image.repository=ghcr.io/khoadang-dinh/robot-sim-isaaclab >/dev/null 2>&1; then
+            echo "rendered without accepting the Isaac Sim EULA" >&2; exit 1
+          fi
+          # shellcheck disable=SC2086
+          if helm template smoke charts/robot-sim $ISAAC --set isaacsim.acceptEula=true >/dev/null 2>&1; then
+            echo "rendered an Isaac Lab experiment with the CPU image" >&2; exit 1
+          fi
+          # shellcheck disable=SC2086
+          helm template smoke charts/robot-sim $ISAAC --set isaacsim.acceptEula=true \
+            --set image.repository=ghcr.io/khoadang-dinh/robot-sim-isaaclab > /tmp/isaac.yaml
+          grep -q 'name: ACCEPT_EULA' /tmp/isaac.yaml
+          if grep -q 'PRIVACY_CONSENT' /tmp/isaac.yaml; then echo "privacy consent must never be set" >&2; exit 1; fi
+          grep -q 'runAsUser: 1234' /tmp/isaac.yaml
+          grep -q 'mountPath: /dev/shm' /tmp/isaac.yaml
+          grep -q 'mountPath: /isaac-sim/.cache' /tmp/isaac.yaml
+          grep -q 'completions: 5' /tmp/isaac.yaml
+          grep -q 'memory: "12Gi"' /tmp/isaac.yaml
       - name: Synchronized experiment renders
         run: |
           helm template smoke charts/robot-sim --set enabled=true --set job.id=ci-sync \

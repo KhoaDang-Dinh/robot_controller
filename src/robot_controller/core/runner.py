@@ -13,8 +13,15 @@ Manifest metadata carries ``progress`` (= steps; read by infra's recovery test),
 the experiment identity (name, config_sha256, adapter/policy names and state
 versions), the latest metrics and cumulative usage.
 
+Two kinds of policy plug in:
+* per-step policies (``act`` + ``learn``): the runner steps the adapter once per step;
+* vectorized learners (``train_step(adapter)``, e.g. rsl_rl PPO on Isaac Lab): one
+  runner "step" is one training iteration over thousands of GPU environments.
+
 Results: when an attempt ends, a summary is written to
-``s3://<research bucket>/results/<experiment>/<job id>/shard-<i>/attempt-<token>.json``.
+``s3://<research bucket>/results/<experiment>/<job id>/shard-<i>/attempt-<token>.json``,
+and any ``artifacts()`` the adapter or policy provide (exported ONNX policy,
+deployment spec) under ``.../attempt-<token>/``.
 """
 from __future__ import annotations
 
@@ -194,9 +201,35 @@ class Runner:
         self.telemetry.event("checkpoint", sequence=sequence, progress=self.steps, suspend=suspend,
                              shard=self.index, metrics=self.metrics)
 
+    def upload_artifacts(self, prefix: str) -> list[str]:
+        """Exported models and deployment specs from plug-ins that provide ``artifacts()``."""
+        keys = []
+        for plugin in (self.adapter, self.policy):
+            produce = getattr(plugin, "artifacts", None)
+            if not callable(produce):
+                continue
+            try:
+                files = produce()
+            except Exception as error:  # noqa: BLE001 - an export failure must not lose the run
+                self.telemetry.event("artifact_export_failed", plugin=plugin.name, error=repr(error)[:300])
+                continue
+            for name, body in sorted(files.items()):
+                if name.startswith("/") or ".." in name.split("/"):
+                    raise ValueError(f"unsafe artifact name {name!r}")
+                key = f"{prefix}/{name}"
+                self.s3.put_object(Bucket=self.bucket, Key=key, Body=body)
+                keys.append(key)
+        return keys
+
     def write_results(self, outcome: str, **extra) -> None:
-        key = (f"results/{self.experiment.name}/{self.rt.job_id}/shard-{self.index:05d}/"
-               f"attempt-{(self.token or 0):06d}.json")
+        stem = (f"results/{self.experiment.name}/{self.rt.job_id}/shard-{self.index:05d}/"
+                f"attempt-{(self.token or 0):06d}")
+        key = f"{stem}.json"
+        if outcome in (COMPLETED, SUSPENDED):
+            try:
+                extra["artifacts"] = self.upload_artifacts(stem)
+            except Exception as error:  # noqa: BLE001
+                self.telemetry.event("artifact_upload_failed", error=type(error).__name__)
         body = {"outcome": outcome, "experiment": self.identity, "job_id": self.rt.job_id, "shard": self.index,
                 "seed": self.seed, "fencing_token": self.token, "steps": self.steps, "sequence": self.sequence,
                 "metrics": self.metrics, "usage": self.telemetry.snapshot(), "image_digest": self.rt.image_digest,
@@ -273,7 +306,8 @@ class Runner:
                              adapter=self.adapter.name, policy=self.policy.name)
         last_checkpoint = time.monotonic()
         sync_every = exp.sync.every_steps if exp.sync else 0
-        observation = self.adapter.observation()
+        vectorized = callable(getattr(self.policy, "train_step", None))
+        observation = None if vectorized else self.adapter.observation()
         try:
             # A replacement that resumes exactly on a barrier boundary re-enters that round.
             if sync_every and self.steps > 0 and self.steps % sync_every == 0:
@@ -286,10 +320,13 @@ class Runner:
                 if self.should_stop():
                     self.stopping = True
                     break
-                action = self.policy.act(observation)
-                result = self.adapter.step(action)
-                self.metrics.update(self.policy.learn(observation, action, result))
-                observation = result.observation
+                if vectorized:
+                    self.metrics.update(self.policy.train_step(self.adapter))
+                else:
+                    action = self.policy.act(observation)
+                    result = self.adapter.step(action)
+                    self.metrics.update(self.policy.learn(observation, action, result))
+                    observation = result.observation
                 self.steps += 1
                 self.telemetry.add("steps")
                 self.stopping = self.should_stop()

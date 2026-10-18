@@ -18,6 +18,10 @@ updates:
       # The interpreter is pinned to 3.12 (pyproject requires-python); move it deliberately.
       - dependency-name: python
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # Isaac Sim is pinned as a pair with Isaac Lab (Dockerfile.isaaclab); move both deliberately.
+      - dependency-name: nvidia/isaac-sim
+      # ROS distro changes (jazzy -> next) are a migration, not an update.
+      - dependency-name: ros
   - package-ecosystem: github-actions
     directory: /
     target-branch: dev

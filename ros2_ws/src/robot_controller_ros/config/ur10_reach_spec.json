@@ -1,0 +1,17 @@
+{
+  "schema": "robot-sim.deploy/v1",
+  "task": "Isaac-Reach-UR10-v0",
+  "_source": "Defaults transcribed from Isaac Lab v2.3.2 (reach_env_cfg.py, ur_10/joint_pos_env_cfg.py, isaaclab_assets UR10_CFG). The deploy/spec.json written by a training run is authoritative; use it instead of this file for real deployments.",
+  "control_period_s": 0.03333333333333333,
+  "joint_names": ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint", "wrist_1_joint", "wrist_2_joint", "wrist_3_joint"],
+  "default_joint_pos": [0.0, -1.712, 1.712, 0.0, 0.0, 0.0],
+  "actions": [
+    {"name": "arm_action", "type": "JointPositionActionCfg", "joint_names": [".*"], "scale": 0.5, "use_default_offset": true}
+  ],
+  "observations": [
+    {"name": "joint_pos", "dim": 6},
+    {"name": "joint_vel", "dim": 6},
+    {"name": "pose_command", "dim": 7},
+    {"name": "actions", "dim": 6}
+  ]
+}

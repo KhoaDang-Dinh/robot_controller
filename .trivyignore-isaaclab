@@ -1,0 +1,15 @@
+# Additional accepted findings for the Isaac Lab profile of the robot-sim chart only
+# (security.yml uses this file when rendering experiments with adapter: isaaclab).
+
+# KSV-0014 read-only root filesystem: Isaac Sim writes kit caches/logs inside its
+# install tree at start-up. Non-root, no capabilities, seccomp RuntimeDefault and
+# no privilege escalation still apply.
+KSV-0014
+KSV014
+
+# KSV-0020/0021 UID/GID <= 10000: Isaac Sim images run as their built-in rootless
+# user 1234:1234 (NVIDIA's documented container user); it owns the cache paths.
+KSV-0020
+KSV020
+KSV-0021
+KSV021

@@ -62,6 +62,7 @@ def check(root: Path = ROOT) -> list[str]:
                                 "not github.repository_owner (GHCR rejects uppercase names)")
                 continue
             for match in GHCR.findall(line):
+                match = match.rstrip(".")  # sentence punctuation in comments and docs
                 if match in BARE_HOST:
                     continue
                 if match == registry:
