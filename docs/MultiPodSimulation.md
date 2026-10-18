@@ -35,7 +35,7 @@ GitHub Actions/self-hosted runner
 2. shards=8 / parallelism=2: 8 independent experiments, 2 at once.
 3. shards=32 / parallelism=4: 32 experiments, up to 4 GPU Pods (requires
    appropriate node group max/desired capacity and GPU quotas).
-4. Optional strict synchronized simulation: set synchronization.enabled=true,
+4. Optional strict synchronized simulation: set `sync:` in the experiment file,
    shards=parallelism, with enough GPUs for every shard. Each round uses a
    fenced S3 checkpoint and DynamoDB barrier. A Spot node loss pauses peers
    while a replacement shard restores and rejoins, subject to timeout.

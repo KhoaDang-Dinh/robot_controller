@@ -1,25 +1,18 @@
 # Opt in explicitly: installing a GPU Job can incur significant cost.
 enabled: false
 
+# The experiment file, passed verbatim:
+#   helm install ... --set-file experiment=experiments/<name>.yaml
+# Shards, parallelism, GPUs per shard, deadline and barrier settings all come from
+# this file; the chart only decides where and how the Pods run.
+experiment: ""
+
 job:
+  # Run id (a DNS label, <= 40 chars). Reuse it only to resume the same run.
   id: ""
-  shards: 1
-  parallelism: 1
-  targetSteps: 120
-  stepSeconds: 1
-  checkpointIntervalSeconds: 600
   ttlSecondsAfterFinished: 86400
-  activeDeadlineSeconds: 0
   # Covers a limited number of lost Pods, including Spot interruptions.
   backoffLimit: 15
-
-# Optional strict, durable barrier at fixed simulation-step boundaries.
-# All shards MUST have schedulable GPU capacity before enabling this mode.
-synchronization:
-  enabled: false
-  everySteps: 10
-  pollSeconds: 5
-  timeoutSeconds: 1800
 
 image:
   # Must live under allowedRegistry, the shared GHCR namespace recorded in
@@ -38,11 +31,9 @@ platform:
 
 gitRevision: unknown
 
-# Cost attribution and observability labels. They are applied to the Job and
-# every Pod, and copied into each telemetry record, so usage can be grouped by
-# experiment / cost centre and joined to node capacity type.
+# Cost attribution: the experiment name (from the file) and this cost centre are
+# applied as labels to the Job and every Pod and copied into each telemetry record.
 cost:
-  experiment: ""      # defaults to job.id
   costCenter: thesis
 observability:
   # Name reported as OpenTelemetry service.name.
@@ -52,9 +43,9 @@ serviceAccount:
   name: robot-sim-worker
 
 scheduling:
-  # Must match a scaled-up EKS GPU node group.
+  # Must match a scaled-up EKS GPU node group. Ignored for CPU-only experiments
+  # (limits.gpus_per_shard: 0).
   purchase: spot
-  gpuPerPod: 1
 
 resources:
   requests:

@@ -16,6 +16,7 @@ Pod replacement:
 
 The Job manifest is rendered from k8s/tests/resume-smoke-job.yaml.tmpl, the
 same file EKS uses, with only the image reference and emulator endpoint changed.
+The image runs its default experiment, experiments/smoke-resume.yaml.
 """
 from __future__ import annotations
 
@@ -174,10 +175,12 @@ def main() -> int:
 
     print("stale generation 1 token must not start", flush=True)
     sh("kubectl", "apply", "-f", "-", input_text=render(3, 1, job_id, args.image, args.pod_endpoint))
-    wait_for("stale Pod failure", lambda: job_status("resume-smoke-3").get("failed"))
+    # An externally fenced Pod exits cleanly without writing anything.
+    wait_for("stale Pod exit", lambda: job_status("resume-smoke-3").get("succeeded")
+             or job_status("resume-smoke-3").get("failed"))
     stale = collect_logs("resume-smoke-3", args.logs)
-    if "ConditionalCheckFailed" not in stale:
-        raise AssertionError("stale Pod failed for an unexpected reason:\n" + stale)
+    if '"event":"fenced_at_start"' not in stale or "ConditionalCheckFailed" not in stale:
+        raise AssertionError("stale Pod was not fenced at start:\n" + stale)
 
     aws.desired("stopping")
     wait_for("generation 2 completion", lambda: job_status("resume-smoke-2").get("succeeded"))

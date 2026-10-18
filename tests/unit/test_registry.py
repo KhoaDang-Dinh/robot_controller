@@ -4,7 +4,7 @@ import subprocess
 
 import check_registry
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def make_repo(tmp_path, files):

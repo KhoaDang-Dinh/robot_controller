@@ -1,0 +1,29 @@
+{
+  "PK": {
+    "S": "JOB#legacy-resume"
+  },
+  "SK": {
+    "S": "META"
+  },
+  "checkpoint_manifest_key": {
+    "S": "jobs/legacy-resume/attempts/1/checkpoints/000004/manifest.json"
+  },
+  "checkpoint_manifest_sha256": {
+    "S": "b03edfa6ab8d37fbe8c5a81586450fea97ee250330a6bacafed56dc44f1c5750"
+  },
+  "checkpoint_seq": {
+    "N": "4"
+  },
+  "checkpoint_uri": {
+    "S": "s3://research/jobs/legacy-resume/attempts/1/checkpoints/000004/"
+  },
+  "fencing_token": {
+    "N": "1"
+  },
+  "resume_required": {
+    "BOOL": true
+  },
+  "status": {
+    "S": "SUSPENDED"
+  }
+}

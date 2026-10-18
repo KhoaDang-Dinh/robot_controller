@@ -2,7 +2,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from checkpoint import CheckpointCommitRejected, CheckpointCorrupt, CheckpointStore
+from robot_controller.core.checkpoint import CheckpointCommitRejected, CheckpointCorrupt, CheckpointStore
 
 
 @pytest.fixture()

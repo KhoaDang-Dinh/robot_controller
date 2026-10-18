@@ -1,0 +1,22 @@
+# Lock-step shards: every shard checkpoints, then waits at a barrier every 10 steps.
+# Needs one schedulable GPU per shard (parallelism must equal shards).
+schema_version: 1
+name: smoke-sync
+adapter:
+  name: smoke
+  params:
+    step_seconds: 1
+policy:
+  name: noop
+shards: 2
+parallelism: 2
+target_steps: 60
+checkpoint_interval_seconds: 600
+sync:
+  every_steps: 10
+  poll_seconds: 5
+  timeout_seconds: 1800
+limits:
+  max_gpus: 2
+  gpus_per_shard: 1
+  active_deadline_seconds: 3600

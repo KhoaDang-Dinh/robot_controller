@@ -22,15 +22,23 @@ Prerequisites:
 5. /robot-sim/dev/runtime/desired-state in SSM equals running.
 6. IAM Pod Identity association for robot-sim-worker applied.
 
+Shards, parallelism, GPUs per shard, deadline and barrier settings come from the
+experiment file (see docs/EXPERIMENTS.md); the chart decides where Pods run.
+
 Example (after scaling the gpu-spot node group to 2 nodes):
 
-    helm lint charts/robot-sim
+    robot-run validate experiments/smoke-multipod.yaml
     helm install sim-trial-001 charts/robot-sim \
       --namespace robot-platform --create-namespace \
       --set enabled=true --set job.id=trial-001 \
-      --set job.shards=8 --set job.parallelism=2 \
+      --set-file experiment=experiments/smoke-multipod.yaml \
       --set image.digest=sha256:REPLACE_WITH_64_HEX_DIGITS \
       --set image.pullSecrets[0].name=ghcr-pull
+
+The experiment file is stored verbatim in a ConfigMap and its SHA-256 is put on
+the Job and Pods (robot-sim/config-sha, robot-sim/config-sha256). Resuming the
+same job.id with a different file is refused unless the file sets
+resume.allow_config_change: true.
 
 Monitor:
 
@@ -59,12 +67,13 @@ mutable global checkpoints from multiple shards into the same S3 path.
 
 ## Synchronized simulation with EC2 Spot loss recovery
 
-The default mode has independent Pods and supports job.parallelism < job.shards.
+The default mode has independent Pods and supports parallelism < shards.
 Optional **strict step synchronization** requires one runnable GPU Pod per
-shard (all shards have to reach each round). Set:
+shard (all shards have to reach each round). In the experiment file:
 
-    --set job.shards=2 --set job.parallelism=2 \
-    --set synchronization.enabled=true --set synchronization.everySteps=10
+    shards: 2
+    parallelism: 2
+    sync: {every_steps: 10}
 
 **Important:** for shards=2 you need at least 2 *available* GPUs. A Job with
 only 1 GPU will deadlock waiting for a Pod that cannot start; Helm detects

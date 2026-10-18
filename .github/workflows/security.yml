@@ -15,6 +15,8 @@ permissions:
 concurrency:
   group: security-${{ github.ref }}
   cancel-in-progress: true
+env:
+  UV_VERSION: "0.12.21"
 jobs:
   sast:
     name: SAST (ruff security rules + Bandit)
@@ -30,13 +32,13 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m pip install "uv==${UV_VERSION}" && uv sync --locked
       - name: Ruff (correctness, bugbear, flake8-bandit)
-        run: ruff check --output-format=github .
+        run: uv run ruff check --output-format=github .
       - name: Bandit (fail on medium+ severity)
         run: |
-          bandit -c pyproject.toml -r workloads scripts -f sarif -o bandit.sarif --exit-zero
-          bandit -c pyproject.toml -r workloads scripts --severity-level medium
+          uv run bandit -c pyproject.toml -r src scripts -f sarif -o bandit.sarif --exit-zero
+          uv run bandit -c pyproject.toml -r src scripts --severity-level medium
       - name: Upload Bandit results
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
@@ -77,27 +79,33 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - name: Install pip-audit
-        run: python -m pip install pip-audit==2.10.1
-      - name: pip-audit runtime dependencies (shipped in images)
-        run: pip-audit --strict -r workloads/requirements.txt
+      - name: Install uv and pip-audit
+        run: python -m pip install "uv==${UV_VERSION}" pip-audit==2.10.1
+      - name: pip-audit runtime dependencies (exactly what the image installs from uv.lock)
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt -o /tmp/runtime.txt
+          pip-audit --strict --require-hashes --disable-pip -r /tmp/runtime.txt
       - name: pip-audit development and CI tools
-        run: pip-audit -r requirements-dev.txt
+        run: |
+          uv export --locked --only-dev --no-emit-project --format requirements-txt -o /tmp/dev.txt
+          pip-audit --require-hashes --disable-pip -r /tmp/dev.txt
       - name: Install pinned, checksum-verified Trivy
         run: bash scripts/install_trivy.sh
       - name: Trivy vulnerabilities, secrets and misconfigurations (repository)
         run: |
-          trivy fs --scanners vuln,secret,misconfig --ignorefile .trivyignore \
+          trivy fs --scanners vuln,secret,misconfig --skip-dirs .venv --ignorefile .trivyignore \
             --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
       - name: Trivy Kubernetes misconfigurations (rendered chart)
         run: |
-          trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
-            --helm-set enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-            charts/robot-sim
+          for experiment in experiments/*.yaml; do
+            trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
+              --helm-set enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+              --helm-set-file experiment="$experiment" charts/robot-sim
+          done
       - name: Trivy SARIF for code scanning
         if: always()
         run: |
-          trivy fs --scanners vuln,secret,misconfig --ignorefile .trivyignore \
+          trivy fs --scanners vuln,secret,misconfig --skip-dirs .venv --ignorefile .trivyignore \
             --format sarif --output trivy-fs.sarif .
       - name: Upload Trivy results
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
@@ -107,7 +115,7 @@ jobs:
           category: trivy-fs
       - name: CycloneDX SBOM of the repository's dependencies
         if: always()
-        run: trivy fs --format cyclonedx --output sbom-repo.cdx.json .
+        run: trivy fs --skip-dirs .venv --format cyclonedx --output sbom-repo.cdx.json .
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         if: always()
         with:

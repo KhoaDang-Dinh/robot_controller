@@ -6,7 +6,7 @@ a barrier with fewer scheduled Pods than total shards will deadlock.
 import time
 
 from botocore.exceptions import ClientError
-from checkpoint import CheckpointCommitRejected
+from robot_controller.core.checkpoint import CheckpointCommitRejected
 
 
 class BarrierStopped(Exception):

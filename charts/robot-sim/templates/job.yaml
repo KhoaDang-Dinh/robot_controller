@@ -1,22 +1,17 @@
 {{- if .Values.enabled }}
+{{- $exp := include "robot-sim.experiment" . | fromJson }}
 {{- $id := required "job.id is required" .Values.job.id }}
 {{- $digest := required "image.digest is required (sha256:...)" .Values.image.digest }}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $id) }}{{ fail "job.id must be a DNS label using lowercase letters, digits and hyphens" }}{{ end }}
 {{- if gt (len $id) 40 }}{{ fail "job.id must be at most 40 characters" }}{{ end }}
 {{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "image.digest must be a pinned sha256 digest" }}{{ end }}
-{{- $shards := int .Values.job.shards }}
-{{- $parallelism := int .Values.job.parallelism }}
-{{- if or (lt $shards 1) (gt $shards 1000) }}{{ fail "job.shards must be between 1 and 1000" }}{{ end }}
-{{- if or (lt $parallelism 1) (gt $parallelism $shards) }}{{ fail "job.parallelism must be between 1 and job.shards" }}{{ end }}
-{{- if and .Values.synchronization.enabled (ne $parallelism $shards) }}{{ fail "synchronization requires job.parallelism == job.shards (and enough actual GPU nodes)" }}{{ end }}
-{{- if and .Values.synchronization.enabled (or (lt (int .Values.synchronization.everySteps) 1) (lt (int .Values.synchronization.pollSeconds) 1) (lt (int .Values.synchronization.timeoutSeconds) 1)) }}{{ fail "synchronization steps/poll/timeout must all be positive" }}{{ end }}
 {{- $registry := trimSuffix "/" .Values.image.allowedRegistry }}
 {{- if not (hasPrefix (printf "%s/" $registry) .Values.image.repository) }}{{ fail (printf "image.repository must be under %s" $registry) }}{{ end }}
-{{- $experiment := default $id .Values.cost.experiment }}
-{{- if not (regexMatch "^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$" $experiment) }}{{ fail "cost.experiment must be a valid label value" }}{{ end }}
 {{- if not (regexMatch "^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$" .Values.cost.costCenter) }}{{ fail "cost.costCenter must be a valid label value" }}{{ end }}
 {{- if not (has .Values.scheduling.purchase (list "spot" "on-demand")) }}{{ fail "scheduling.purchase must be spot or on-demand" }}{{ end }}
-{{- if lt (int .Values.scheduling.gpuPerPod) 1 }}{{ fail "scheduling.gpuPerPod must be >=1" }}{{ end }}
+{{- $gpus := int $exp.gpus }}
+{{- $capacity := ternary .Values.scheduling.purchase "cpu" (gt $gpus 0) }}
+{{- $configSha := substr 0 16 $exp.sha }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -26,19 +21,22 @@ metadata:
     app.kubernetes.io/name: robot-sim
     app.kubernetes.io/part-of: robot-sim
     robot-sim/job-id: {{ $id | quote }}
-    robot-sim/experiment: {{ $experiment | quote }}
+    robot-sim/experiment: {{ $exp.name | quote }}
+    robot-sim/config-sha: {{ $configSha | quote }}
     robot-sim/cost-center: {{ .Values.cost.costCenter | quote }}
-    robot-sim/capacity-type: {{ .Values.scheduling.purchase | quote }}
+    robot-sim/capacity-type: {{ $capacity | quote }}
+  annotations:
+    robot-sim/config-sha256: {{ $exp.sha | quote }}
 spec:
   completionMode: Indexed
-  completions: {{ $shards }}
-  parallelism: {{ $parallelism }}
+  completions: {{ int $exp.shards }}
+  parallelism: {{ int $exp.parallelism }}
   backoffLimit: {{ .Values.job.backoffLimit }}
   {{- if gt (int .Values.job.ttlSecondsAfterFinished) 0 }}
   ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
   {{- end }}
-  {{- if gt (int .Values.job.activeDeadlineSeconds) 0 }}
-  activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+  {{- if gt (int $exp.deadline) 0 }}
+  activeDeadlineSeconds: {{ int $exp.deadline }}
   {{- end }}
   template:
     metadata:
@@ -46,9 +44,13 @@ spec:
         app.kubernetes.io/name: robot-sim
         app.kubernetes.io/part-of: robot-sim
         robot-sim/job-id: {{ $id | quote }}
-        robot-sim/experiment: {{ $experiment | quote }}
+        robot-sim/experiment: {{ $exp.name | quote }}
+        robot-sim/config-sha: {{ $configSha | quote }}
         robot-sim/cost-center: {{ .Values.cost.costCenter | quote }}
-        robot-sim/capacity-type: {{ .Values.scheduling.purchase | quote }}
+        robot-sim/capacity-type: {{ $capacity | quote }}
+      annotations:
+        # A changed experiment file is a new Pod spec, never an in-place edit.
+        robot-sim/config-sha256: {{ $exp.sha | quote }}
     spec:
       serviceAccountName: {{ .Values.serviceAccount.name | quote }}
       restartPolicy: Never
@@ -72,6 +74,7 @@ spec:
           labelSelector:
             matchLabels:
               robot-sim/job-id: {{ $id | quote }}
+      {{- if gt $gpus 0 }}
       nodeSelector:
         robot-sim/node-class: gpu
         robot-sim/purchase: {{ .Values.scheduling.purchase | quote }}
@@ -80,11 +83,15 @@ spec:
           operator: Equal
           value: "true"
           effect: NoSchedule
+      {{- end }}
       containers:
         - name: simulation
           image: {{ printf "%s@%s" .Values.image.repository $digest | quote }}
           imagePullPolicy: IfNotPresent
+          args: ["run"]
           env:
+            - name: EXPERIMENT_FILE
+              value: /etc/robot/experiment.yaml
             - name: AWS_REGION
               value: {{ .Values.aws.region | quote }}
             - name: PLATFORM_PROJECT
@@ -97,41 +104,25 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
-            - name: SHARD_COUNT
-              value: {{ $shards | quote }}
-            - name: SYNC_ENABLED
-              value: {{ .Values.synchronization.enabled | quote }}
-            - name: SYNC_EVERY_STEPS
-              value: {{ .Values.synchronization.everySteps | quote }}
-            - name: SYNC_POLL_SECONDS
-              value: {{ .Values.synchronization.pollSeconds | quote }}
-            - name: SYNC_TIMEOUT_SECONDS
-              value: {{ .Values.synchronization.timeoutSeconds | quote }}
-            - name: TARGET_STEPS
-              value: {{ .Values.job.targetSteps | quote }}
-            - name: STEP_SECONDS
-              value: {{ .Values.job.stepSeconds | quote }}
-            - name: CHECKPOINT_INTERVAL_SECONDS
-              value: {{ .Values.job.checkpointIntervalSeconds | quote }}
             - name: IMAGE_DIGEST
               value: {{ $digest | quote }}
             - name: GIT_REVISION
               value: {{ .Values.gitRevision | quote }}
             - name: HOME
               value: /work
-            # Telemetry resource attributes (see workloads/telemetry.py).
+            # Telemetry resource attributes (see core/telemetry.py).
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.observability.serviceName | quote }}
             - name: IMAGE_NAME
               value: {{ .Values.image.repository | quote }}
             - name: EXPERIMENT
-              value: {{ $experiment | quote }}
+              value: {{ $exp.name | quote }}
             - name: COST_CENTER
               value: {{ .Values.cost.costCenter | quote }}
             - name: CAPACITY_TYPE
-              value: {{ .Values.scheduling.purchase | quote }}
+              value: {{ $capacity | quote }}
             - name: GPU_COUNT
-              value: {{ .Values.scheduling.gpuPerPod | quote }}
+              value: {{ $gpus | quote }}
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -152,12 +143,19 @@ spec:
             requests:
               cpu: {{ .Values.resources.requests.cpu | quote }}
               memory: {{ .Values.resources.requests.memory | quote }}
-              nvidia.com/gpu: {{ .Values.scheduling.gpuPerPod }}
+              {{- if gt $gpus 0 }}
+              nvidia.com/gpu: {{ $gpus }}
+              {{- end }}
             limits:
               cpu: {{ .Values.resources.limits.cpu | quote }}
               memory: {{ .Values.resources.limits.memory | quote }}
-              nvidia.com/gpu: {{ .Values.scheduling.gpuPerPod }}
+              {{- if gt $gpus 0 }}
+              nvidia.com/gpu: {{ $gpus }}
+              {{- end }}
           volumeMounts:
+            - name: experiment
+              mountPath: /etc/robot
+              readOnly: true
             - name: scratch
               mountPath: /work
             - name: tmp
@@ -173,6 +171,9 @@ spec:
             capabilities:
               drop: ["ALL"]
       volumes:
+        - name: experiment
+          configMap:
+            name: {{ printf "robot-sim-%s-experiment" $id | quote }}
         - name: scratch
           emptyDir: {}
         - name: tmp

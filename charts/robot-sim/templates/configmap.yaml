@@ -1,0 +1,19 @@
+{{- if .Values.enabled }}
+{{- $exp := include "robot-sim.experiment" . | fromJson }}
+{{- $id := required "job.id is required" .Values.job.id }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "robot-sim-%s-experiment" $id | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: robot-sim
+    app.kubernetes.io/part-of: robot-sim
+    robot-sim/job-id: {{ $id | quote }}
+    robot-sim/experiment: {{ $exp.name | quote }}
+  annotations:
+    robot-sim/config-sha256: {{ $exp.sha | quote }}
+data:
+  # Stored verbatim: the runner hashes these exact bytes (config_sha256).
+  experiment.yaml: {{ .Values.experiment | quote }}
+{{- end }}

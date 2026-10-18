@@ -7,19 +7,22 @@ because new CVEs are published against code that has not changed.
 | Kind | Tool | Workflow | Blocks merge when |
 |---|---|---|---|
 | Unit | pytest + moto (in-process) | `ci.yml` | any test fails |
+| Compatibility | golden checkpoints from earlier releases must resume or be refused clearly | `ci.yml` (`tests/compat`) | a release can no longer read existing runs |
+| Experiments | `robot-run validate experiments/*.yaml` | `ci.yml` | bad schema, unknown plug-in or params |
 | Dynamic, process level | real worker subprocesses against a moto **server** | `ci.yml` (`tests/dynamic`) | resume, fencing or SIGTERM-suspend breaks |
 | Dynamic, container + Kubernetes | image built, run as a Job on kind against a host emulator | `e2e.yml` | resume across Pod replacement or stale-token rejection breaks |
 | Chart | `helm lint`, render assertions, rejection of unsafe values | `ci.yml` | unpinned/foreign image, bad labels, unschedulable barrier |
 | SAST | Ruff (`S` = flake8-bandit, `B`, `E`, `F`, `UP`) | `security.yml` | any finding |
 | SAST | Bandit (SARIF to code scanning) | `security.yml` | medium or higher severity |
 | SAST | CodeQL `security-extended` for Python **and GitHub Actions** | `security.yml` | alerts surface in code scanning |
-| SCA | pip-audit on `workloads/requirements.txt` (shipped) and `requirements-dev.txt` | `security.yml` | any known vulnerability in shipped deps |
+| SCA | pip-audit on `uv.lock`, exported with hashes: runtime (shipped) and dev groups | `security.yml` | any known vulnerability in shipped deps |
 | SCA / secrets / IaC | Trivy `fs` (vuln, secret, misconfig) | `security.yml` | fixable HIGH/CRITICAL |
 | IaC | Trivy `config` on the rendered Helm chart | `security.yml` | MEDIUM+ misconfiguration |
 | Image | Trivy `image` | `e2e.yml`, `build-images.yml` | fixable HIGH/CRITICAL; the push is skipped |
 | SBOM | Trivy CycloneDX (repo + each pushed image) | `security.yml`, `build-images.yml` | — (artifact) |
 | New dependencies | GitHub dependency review | `security.yml` (PR only) | HIGH+ advisory introduced |
-| Updates | Dependabot (pip, Docker base image, Actions) | `.github/dependabot.yml` | — |
+| Updates | Dependabot (uv, Docker base image, Actions) | `.github/dependabot.yml` | — |
+| Cooling-off | uv `exclude-newer = "14 days"`: no dependency release younger than two weeks is resolved | `pyproject.toml` | — |
 | Registry drift | `scripts/check_registry.py` | `ci.yml` | any image outside the shared GHCR namespace |
 
 ## Trivy installation
@@ -35,13 +38,12 @@ Accepted findings live in `.trivyignore`, each with a reason.
 ## Running locally
 
 ```bash
-python3 -m venv .venv && . .venv/bin/activate
-pip install -r requirements-dev.txt
-pytest -q                      # unit + dynamic process tests
-ruff check . && bandit -c pyproject.toml -r workloads scripts
-pip-audit -r workloads/requirements.txt
-bash scripts/install_trivy.sh .bin && .bin/trivy fs --ignorefile .trivyignore .
-python3 scripts/check_registry.py
+uv sync                                     # dev tools from uv.lock
+uv run pytest -q                            # unit + compat + dynamic
+uv run ruff check . && uv run bandit -c pyproject.toml -r src scripts
+uv export --no-dev --no-emit-project -o /tmp/rt.txt && uv run pip-audit --require-hashes --disable-pip -r /tmp/rt.txt
+bash scripts/install_trivy.sh .bin && .bin/trivy fs --skip-dirs .venv --ignorefile .trivyignore .
+uv run python scripts/check_registry.py
 ```
 
 The kind e2e needs Docker and kind; follow the steps in `.github/workflows/e2e.yml`.

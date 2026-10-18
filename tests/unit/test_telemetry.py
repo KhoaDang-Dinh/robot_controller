@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from telemetry import SCHEMA, Telemetry, resource_attributes
+from robot_controller.core.telemetry import SCHEMA, Telemetry, resource_attributes
 
 
 def test_resource_attributes_follow_semantic_conventions():

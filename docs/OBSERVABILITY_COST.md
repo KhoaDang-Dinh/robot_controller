@@ -20,7 +20,7 @@ flowchart LR
 
 ## What exists now
 
-### Structured telemetry (`workloads/telemetry.py`)
+### Structured telemetry (`src/robot_controller/core/telemetry.py`)
 
 Every record is a single-line JSON object with `schema: robot-sim.telemetry/v1`, an
 `event` name and a `resource` block. Resource keys follow OpenTelemetry semantic
@@ -57,12 +57,22 @@ runtime destroy.
 |---|---|---|
 | `app.kubernetes.io/part-of: robot-sim` | chart / template | select all platform workloads |
 | `robot-sim/job-id` | `job.id` | join to DynamoDB/S3 state |
-| `robot-sim/experiment` | `cost.experiment` (defaults to job id) | group cost by experiment |
+| `robot-sim/experiment` | experiment file `name` | group cost by experiment |
+| `robot-sim/config-sha` | first 16 hex of the experiment file's SHA-256 | group by variant of an experiment |
 | `robot-sim/cost-center` | `cost.costCenter` | group by funding line |
-| `robot-sim/capacity-type` | `scheduling.purchase` | spot vs on-demand rate |
+| `robot-sim/capacity-type` | `scheduling.purchase`, or `cpu` for GPU-less experiments | spot vs on-demand rate |
 
 The downward API also gives each Pod its `POD_NAME`, `POD_NAMESPACE`, `POD_UID`
 and `NODE_NAME`. Use the node name to join a record to the node's instance type.
+
+### Results in S3
+
+When an attempt ends (completed, suspended or fenced), the runner writes
+`results/<experiment>/<job id>/shard-<i>/attempt-<token>.json` to the research
+bucket. Each file holds the outcome, steps, the latest policy metrics, usage, and
+the experiment identity: config SHA-256, adapter/policy names and state versions.
+It also records the image digest and git revision. This is the experiment-tracking
+record until a tracking server is worth adding.
 
 ### Usage report (`scripts/usage_report.py`)
 

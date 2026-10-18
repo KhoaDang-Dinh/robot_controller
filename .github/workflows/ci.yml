@@ -1,5 +1,6 @@
 name: CI
-# Unit, dynamic (process-level) and chart tests. No cloud credentials.
+# Unit, dynamic (process-level), golden-checkpoint compatibility, experiment and
+# chart tests. No cloud credentials.
 on:
   pull_request:
   push:
@@ -10,7 +11,24 @@ permissions:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+env:
+  UV_VERSION: "0.12.21"
 jobs:
+  experiments:
+    # Seconds: the only check an experiment-file-only change needs.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install "uv==${UV_VERSION}"
+      - name: Validate every experiment file (schema, plug-ins, params)
+        run: uv run --locked --no-dev robot-run validate experiments/*.yaml
+
   python:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -21,14 +39,14 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.12"
-      - name: Install pinned test dependencies
-        run: python -m pip install -r requirements-dev.txt
-      - name: Syntax
-        run: python -m compileall -q scripts workloads
+      - run: python -m pip install "uv==${UV_VERSION}"
+      - name: Lockfile is up to date with pyproject.toml
+        run: uv lock --check
+      - run: uv sync --locked
       - name: Shared GHCR registry
-        run: python scripts/check_registry.py
-      - name: Unit and dynamic tests (worker processes against a local AWS emulator)
-        run: python -m pytest -q -ra
+        run: uv run python scripts/check_registry.py
+      - name: Unit, compat (golden checkpoints) and dynamic tests
+        run: uv run pytest -q -ra
 
   helm:
     runs-on: ubuntu-latest
@@ -42,39 +60,58 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.19.0
-      - name: Lint multi-pod chart
-        run: helm lint charts/robot-sim
-      - name: Render 4-shard / 2-GPU Pod Job with cost and telemetry labels
+      - name: Lint with a real experiment
+        run: |
+          helm lint charts/robot-sim --set enabled=true --set job.id=ci \
+            --set image.digest="$DIGEST" --set-file experiment=experiments/smoke-multipod.yaml
+      - name: Shards, parallelism, GPUs and labels come from the experiment file
         run: |
           helm template smoke charts/robot-sim --namespace robot-platform \
-            --set enabled=true --set job.id=ci-multipod \
-            --set job.shards=4 --set job.parallelism=2 \
-            --set image.digest="$DIGEST" > /tmp/robot-sim-job.yaml
-          grep -q 'completionMode: Indexed' /tmp/robot-sim-job.yaml
-          grep -q 'parallelism: 2' /tmp/robot-sim-job.yaml
-          grep -q 'completions: 4' /tmp/robot-sim-job.yaml
-          grep -q 'robot-sim/cost-center: "thesis"' /tmp/robot-sim-job.yaml
-          grep -q 'robot-sim/experiment: "ci-multipod"' /tmp/robot-sim-job.yaml
-          grep -q 'fieldPath: spec.nodeName' /tmp/robot-sim-job.yaml
-          grep -q 'image: "ghcr.io/khoadang-dinh/robot-sim-worker@sha256:' /tmp/robot-sim-job.yaml
-      - name: Render synchronized Job
+            --set enabled=true --set job.id=ci-multipod --set image.digest="$DIGEST" \
+            --set-file experiment=experiments/smoke-multipod.yaml > /tmp/multipod.yaml
+          SHA="$(sha256sum experiments/smoke-multipod.yaml | cut -c1-64)"
+          grep -q 'completionMode: Indexed' /tmp/multipod.yaml
+          grep -q 'completions: 8' /tmp/multipod.yaml
+          grep -q 'parallelism: 2' /tmp/multipod.yaml
+          grep -q 'activeDeadlineSeconds: 7200' /tmp/multipod.yaml
+          grep -q 'nvidia.com/gpu: 1' /tmp/multipod.yaml
+          grep -q 'robot-sim/experiment: "smoke-multipod"' /tmp/multipod.yaml
+          grep -q "robot-sim/config-sha256: \"$SHA\"" /tmp/multipod.yaml
+          grep -q "robot-sim/config-sha: \"${SHA:0:16}\"" /tmp/multipod.yaml
+          grep -q 'kind: ConfigMap' /tmp/multipod.yaml
+          grep -q 'value: /etc/robot/experiment.yaml' /tmp/multipod.yaml
+          grep -q 'fieldPath: spec.nodeName' /tmp/multipod.yaml
+          grep -q 'image: "ghcr.io/khoadang-dinh/robot-sim-worker@sha256:' /tmp/multipod.yaml
+      - name: CPU-only experiment requests no GPU and targets no GPU nodes
         run: |
-          helm template smoke charts/robot-sim \
-            --set enabled=true --set job.id=sync-ci \
-            --set job.shards=2 --set job.parallelism=2 \
-            --set synchronization.enabled=true \
-            --set image.digest="$DIGEST" > /tmp/robot-sim-sync.yaml
-          grep -q 'name: SYNC_ENABLED' /tmp/robot-sim-sync.yaml
-      - name: Reject unsafe values
+          helm template smoke charts/robot-sim --set enabled=true --set job.id=ci-cpu \
+            --set image.digest="$DIGEST" --set-file experiment=experiments/smoke-resume.yaml > /tmp/cpu.yaml
+          if grep -q 'nvidia.com/gpu' /tmp/cpu.yaml; then echo 'CPU experiment requested a GPU' >&2; exit 1; fi
+          grep -q 'robot-sim/capacity-type: "cpu"' /tmp/cpu.yaml
+      - name: Synchronized experiment renders
         run: |
+          helm template smoke charts/robot-sim --set enabled=true --set job.id=ci-sync \
+            --set image.digest="$DIGEST" --set-file experiment=experiments/smoke-sync.yaml > /dev/null
+      - name: Reject unsafe values and experiments
+        run: |
+          REGISTRY="$(python3 -c 'import json; print(json.load(open("config/images.json"))["registry"])')"
           reject() {
             if helm template smoke charts/robot-sim --set enabled=true --set job.id=ci "$@" >/dev/null 2>&1; then
               echo "chart accepted: $*" >&2; exit 1
             fi
           }
-          reject                                                      # unpinned image
-          reject --set image.digest="$DIGEST" --set image.repository=docker.io/library/python
-          REGISTRY="$(python3 -c 'import json; print(json.load(open("config/images.json"))["registry"])')"
-          reject --set image.digest="$DIGEST" --set image.repository="${REGISTRY}-evil/robot-sim-worker"  # prefix lookalike
-          reject --set image.digest="$DIGEST" --set job.shards=2 --set job.parallelism=1 --set synchronization.enabled=true
-          reject --set image.digest="$DIGEST" --set cost.costCenter='bad value!'
+          bad() { printf '%s\n' "schema_version: 1" "name: bad" "adapter: {name: smoke}" "policy: {name: noop}" "$@" > /tmp/bad.yaml; }
+          bad "limits: {max_gpus: 1}"
+          reject --set-file experiment=/tmp/bad.yaml                                    # unpinned image
+          reject --set image.digest="$DIGEST"                                           # no experiment
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml \
+                 --set image.repository=docker.io/library/python
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml \
+                 --set image.repository="${REGISTRY}-evil/robot-sim-worker"             # prefix lookalike
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml --set cost.costCenter='bad value!'
+          bad "shards: 2" "parallelism: 1" "sync: {every_steps: 5}" "limits: {max_gpus: 2}"
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml       # unschedulable barrier
+          bad "shards: 4" "parallelism: 4" "limits: {max_gpus: 2}"
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml       # over GPU budget
+          bad "limits: {max_gpus: 1}" "name: Has_Upper"
+          reject --set image.digest="$DIGEST" --set-file experiment=/tmp/bad.yaml       # duplicate/invalid name

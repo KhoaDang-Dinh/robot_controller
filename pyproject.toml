@@ -1,14 +1,47 @@
 [project]
 name = "robot-controller"
-version = "0.1.0"
-description = "Robot simulation workloads, Helm charts and release tests"
-requires-python = ">=3.12"
+version = "0.2.0"
+description = "Robot simulation workloads: stable recovery core with pluggable simulators and policies"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# Runtime dependencies shipped in the image. Ranges here; exact versions + hashes in uv.lock.
+dependencies = [
+  "boto3>=1.40,<2",
+  "pyyaml>=6.0.2,<7",
+]
+
+[project.scripts]
+robot-run = "robot_controller.cli:main"
+
+[dependency-groups]
+dev = [
+  "pytest>=9,<10",
+  "moto[dynamodb,s3,ssm,sts,server]>=5.2,<6",
+  "ruff>=0.16,<0.17",
+  "bandit[sarif]>=1.9,<2",
+  "pip-audit>=2.10,<3",
+]
+
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/robot_controller"]
+
+[tool.uv]
+# uv sync installs the dev group by default; images use --no-dev.
+default-groups = ["dev"]
+# Supply-chain cooling-off period: never resolve a release younger than two weeks.
+# Freshly published malicious versions are usually caught and yanked within days.
+exclude-newer = "14 days"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["workloads", "scripts"]
+pythonpath = ["scripts"]
 markers = [
   "dynamic: runs workload processes against a local AWS emulator (moto server)",
+  "compat: restores golden checkpoints written by earlier releases",
 ]
 
 [tool.ruff]
@@ -20,8 +53,8 @@ extend-exclude = [".venv"]
 # E/F: correctness, B: bugbear, S: flake8-bandit (security), UP: pyupgrade.
 select = ["E", "F", "B", "S", "UP"]
 ignore = [
-  "E501",  # long lines are tolerated in workflow-style scripts
-  "UP006", "UP035",  # keep typing imports stable across Python 3.10+ scripts
+  "E501",
+  "UP006", "UP035",
 ]
 
 [tool.ruff.lint.per-file-ignores]
