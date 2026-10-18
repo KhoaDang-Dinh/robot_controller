@@ -1,0 +1,12 @@
+# Accepted Trivy findings. Every entry needs a reason; review when Trivy updates.
+
+# KSV-0125 "untrusted registry": Trivy's built-in allow-list does not include
+# GHCR. Images are restricted to ghcr.io/khoadang-dinh by scripts/check_registry.py,
+# the chart's image.allowedRegistry guard and the SSM contract check.
+KSV-0125
+KSV125
+
+# KSV-0110 "default namespace": only reported because `helm template` renders with
+# the default release namespace; real installs use --namespace robot-platform.
+KSV-0110
+KSV110

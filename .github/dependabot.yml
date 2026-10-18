@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /workloads
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      aws-sdk: {patterns: ["boto3", "botocore", "s3transfer"]}
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+  - package-ecosystem: docker
+    directory: /containers
+    schedule: {interval: weekly}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}

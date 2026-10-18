@@ -1,0 +1,180 @@
+{{- if .Values.enabled }}
+{{- $id := required "job.id is required" .Values.job.id }}
+{{- $digest := required "image.digest is required (sha256:...)" .Values.image.digest }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $id) }}{{ fail "job.id must be a DNS label using lowercase letters, digits and hyphens" }}{{ end }}
+{{- if gt (len $id) 40 }}{{ fail "job.id must be at most 40 characters" }}{{ end }}
+{{- if not (regexMatch "^sha256:[a-f0-9]{64}$" $digest) }}{{ fail "image.digest must be a pinned sha256 digest" }}{{ end }}
+{{- $shards := int .Values.job.shards }}
+{{- $parallelism := int .Values.job.parallelism }}
+{{- if or (lt $shards 1) (gt $shards 1000) }}{{ fail "job.shards must be between 1 and 1000" }}{{ end }}
+{{- if or (lt $parallelism 1) (gt $parallelism $shards) }}{{ fail "job.parallelism must be between 1 and job.shards" }}{{ end }}
+{{- if and .Values.synchronization.enabled (ne $parallelism $shards) }}{{ fail "synchronization requires job.parallelism == job.shards (and enough actual GPU nodes)" }}{{ end }}
+{{- if and .Values.synchronization.enabled (or (lt (int .Values.synchronization.everySteps) 1) (lt (int .Values.synchronization.pollSeconds) 1) (lt (int .Values.synchronization.timeoutSeconds) 1)) }}{{ fail "synchronization steps/poll/timeout must all be positive" }}{{ end }}
+{{- $registry := trimSuffix "/" .Values.image.allowedRegistry }}
+{{- if not (hasPrefix (printf "%s/" $registry) .Values.image.repository) }}{{ fail (printf "image.repository must be under %s" $registry) }}{{ end }}
+{{- $experiment := default $id .Values.cost.experiment }}
+{{- if not (regexMatch "^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$" $experiment) }}{{ fail "cost.experiment must be a valid label value" }}{{ end }}
+{{- if not (regexMatch "^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$" .Values.cost.costCenter) }}{{ fail "cost.costCenter must be a valid label value" }}{{ end }}
+{{- if not (has .Values.scheduling.purchase (list "spot" "on-demand")) }}{{ fail "scheduling.purchase must be spot or on-demand" }}{{ end }}
+{{- if lt (int .Values.scheduling.gpuPerPod) 1 }}{{ fail "scheduling.gpuPerPod must be >=1" }}{{ end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "robot-sim-%s" $id | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    app.kubernetes.io/name: robot-sim
+    app.kubernetes.io/part-of: robot-sim
+    robot-sim/job-id: {{ $id | quote }}
+    robot-sim/experiment: {{ $experiment | quote }}
+    robot-sim/cost-center: {{ .Values.cost.costCenter | quote }}
+    robot-sim/capacity-type: {{ .Values.scheduling.purchase | quote }}
+spec:
+  completionMode: Indexed
+  completions: {{ $shards }}
+  parallelism: {{ $parallelism }}
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  {{- if gt (int .Values.job.ttlSecondsAfterFinished) 0 }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  {{- end }}
+  {{- if gt (int .Values.job.activeDeadlineSeconds) 0 }}
+  activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+  {{- end }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: robot-sim
+        app.kubernetes.io/part-of: robot-sim
+        robot-sim/job-id: {{ $id | quote }}
+        robot-sim/experiment: {{ $experiment | quote }}
+        robot-sim/cost-center: {{ .Values.cost.costCenter | quote }}
+        robot-sim/capacity-type: {{ .Values.scheduling.purchase | quote }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name | quote }}
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 110
+      {{- with .Values.image.pullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Prefer distinct VMs to reduce the impact of a single EC2 loss.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              robot-sim/job-id: {{ $id | quote }}
+      nodeSelector:
+        robot-sim/node-class: gpu
+        robot-sim/purchase: {{ .Values.scheduling.purchase | quote }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      containers:
+        - name: simulation
+          image: {{ printf "%s@%s" .Values.image.repository $digest | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: PLATFORM_PROJECT
+              value: {{ .Values.platform.project | quote }}
+            - name: PLATFORM_ENVIRONMENT
+              value: {{ .Values.platform.environment | quote }}
+            - name: JOB_ID
+              value: {{ $id | quote }}
+            - name: JOB_COMPLETION_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+            - name: SHARD_COUNT
+              value: {{ $shards | quote }}
+            - name: SYNC_ENABLED
+              value: {{ .Values.synchronization.enabled | quote }}
+            - name: SYNC_EVERY_STEPS
+              value: {{ .Values.synchronization.everySteps | quote }}
+            - name: SYNC_POLL_SECONDS
+              value: {{ .Values.synchronization.pollSeconds | quote }}
+            - name: SYNC_TIMEOUT_SECONDS
+              value: {{ .Values.synchronization.timeoutSeconds | quote }}
+            - name: TARGET_STEPS
+              value: {{ .Values.job.targetSteps | quote }}
+            - name: STEP_SECONDS
+              value: {{ .Values.job.stepSeconds | quote }}
+            - name: CHECKPOINT_INTERVAL_SECONDS
+              value: {{ .Values.job.checkpointIntervalSeconds | quote }}
+            - name: IMAGE_DIGEST
+              value: {{ $digest | quote }}
+            - name: GIT_REVISION
+              value: {{ .Values.gitRevision | quote }}
+            - name: HOME
+              value: /work
+            # Telemetry resource attributes (see workloads/telemetry.py).
+            - name: OTEL_SERVICE_NAME
+              value: {{ .Values.observability.serviceName | quote }}
+            - name: IMAGE_NAME
+              value: {{ .Values.image.repository | quote }}
+            - name: EXPERIMENT
+              value: {{ $experiment | quote }}
+            - name: COST_CENTER
+              value: {{ .Values.cost.costCenter | quote }}
+            - name: CAPACITY_TYPE
+              value: {{ .Values.scheduling.purchase | quote }}
+            - name: GPU_COUNT
+              value: {{ .Values.scheduling.gpuPerPod | quote }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          resources:
+            requests:
+              cpu: {{ .Values.resources.requests.cpu | quote }}
+              memory: {{ .Values.resources.requests.memory | quote }}
+              nvidia.com/gpu: {{ .Values.scheduling.gpuPerPod }}
+            limits:
+              cpu: {{ .Values.resources.limits.cpu | quote }}
+              memory: {{ .Values.resources.limits.memory | quote }}
+              nvidia.com/gpu: {{ .Values.scheduling.gpuPerPod }}
+          volumeMounts:
+            - name: scratch
+              mountPath: /work
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            seccompProfile:
+              type: RuntimeDefault
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

@@ -1,0 +1,18 @@
+{
+  "_comment": "Single source of truth for container images. Must match infra_robot_sim config/images.json and the container_registry field of the Terraform SSM contract.",
+  "registry": "ghcr.io/khoadang-dinh",
+  "images": {
+    "resume-smoke": {
+      "owner": "robot_controller",
+      "dockerfile": "containers/Dockerfile.resume-smoke"
+    },
+    "robot-sim-worker": {
+      "owner": "robot_controller",
+      "dockerfile": "containers/Dockerfile.robot-sim-worker"
+    },
+    "robot-controller": {
+      "owner": "infra_robot_sim",
+      "note": "Built from infra_robot_sim platform/control until the controller migration lands."
+    }
+  }
+}

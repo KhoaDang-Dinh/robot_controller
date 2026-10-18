@@ -1,0 +1,34 @@
+[project]
+name = "robot-controller"
+version = "0.1.0"
+description = "Robot simulation workloads, Helm charts and release tests"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["workloads", "scripts"]
+markers = [
+  "dynamic: runs workload processes against a local AWS emulator (moto server)",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+# E/F: correctness, B: bugbear, S: flake8-bandit (security), UP: pyupgrade.
+select = ["E", "F", "B", "S", "UP"]
+ignore = [
+  "E501",  # long lines are tolerated in workflow-style scripts
+  "UP006", "UP035",  # keep typing imports stable across Python 3.10+ scripts
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S106", "S603", "S607", "S108", "B017", "E701", "E402"]
+"scripts/**" = ["S603", "S607"]
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]
+# B603/B607: subprocess with fixed argv lists to kubectl/aws is intentional.
+skips = ["B603", "B607"]
