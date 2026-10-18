@@ -45,13 +45,27 @@ def sh(*args, input_text=None, check=True):
     return result.stdout
 
 
+def json_documents(text: str) -> list[dict]:
+    """kubectl prints one JSON object per input document, back to back (not a List)."""
+    decoder, documents, index = json.JSONDecoder(), [], 0
+    while index < len(text):
+        while index < len(text) and text[index].isspace():
+            index += 1
+        if index == len(text):
+            break
+        document, index = decoder.raw_decode(text, index)
+        documents.append(document)
+    return documents
+
+
 def render(generation: int, token: int, job_id: str, image: str, endpoint: str) -> str:
     text = string.Template(TEMPLATE.read_text()).substitute(
         JOB_ID=job_id, RUNTIME_GENERATION=generation, FENCING_TOKEN=token,
         IMAGE_DIGEST="sha256:" + "0" * 64, GIT_REVISION=os.environ.get("GITHUB_SHA", "local"))
-    documents = json.loads(sh("kubectl", "create", "--dry-run=client", "-o", "json", "-f", "-",
-                              input_text=text))
-    items = documents["items"] if documents.get("kind") == "List" else [documents]
+    items = []
+    for document in json_documents(sh("kubectl", "create", "--dry-run=client", "-o", "json", "-f", "-",
+                                      input_text=text)):
+        items.extend(document["items"] if document.get("kind") == "List" else [document])
     for item in items:
         if item["kind"] != "Job":
             continue
