@@ -26,20 +26,21 @@ python3 scripts/hello_ssm.py --region ap-southeast-1
 
 Only region (and optional project/environment) is supplied. The script reads SSM, validates
 schema/account/region/environment and checks live EKS status/name/ARN/endpoint. It uses a
-temporary kubeconfig without changing the operator's default context, applies the dedicated
-namespace plus non-secret robot-platform-contract ConfigMap, and runs the existing Job.
+temporary kubeconfig without changing the operator's default context, uses the infra-created dedicated
+namespace and applies the non-secret robot-platform-contract ConfigMap, and runs the existing Job.
 The Job verifies completion/log output and deletes itself. Namespace/ConfigMap remain.
 The ConfigMap is a snapshot, refreshed on the next invocation, not continuously synchronized.
 Argo CD must not separately own these smoke resources. The Hello World itself needs no
 AWS permissions and does not use the controller IAM role published in the contract.
 
+See [runner role setup](RUNNER_ACCESS.md) for the dedicated app dev role and manual workflow.
+
 ## Access and failure behavior
 
 The runner needs ssm:GetParameter for the exact kubernetes/v1 parameter,
-eks:DescribeCluster, STS identity access, and existing EKS access/RBAC for namespace,
-ConfigMap, Job and Pod-log operations. The existing RuntimeOperator policy includes the
+eks:DescribeCluster, STS identity access, and EKS access for ConfigMap, Job and Pod-log operations in the infra-created namespaces. The existing RuntimeOperator policy includes the
 SSM/EKS read calls, but IAM permission alone does not grant Kubernetes access: an EKS
-access entry/RBAC grant is still required. This change does not create a new access grant.
+access entry/RBAC grant is still required. The dedicated app dev deployment role and namespace-scoped EKS access are defined in infra.
 Use existing trusted deployment identity/access setup; do not run with credentials from
 an untrusted PR. Kubernetes pods do not inherit these runner credentials.
 

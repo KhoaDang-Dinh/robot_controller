@@ -1,0 +1,72 @@
+name: Dev smoke through scoped deployment role
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: robot-controller-dev-deploy
+  cancel-in-progress: false
+jobs:
+  smoke:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: [self-hosted, linux, x64, robot-sim-admin]
+    environment: dev
+    timeout-minutes: 15
+    steps:
+      - name: Discover dev deployment role from SSM
+        id: discovery
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          test -n "$AWS_REGION"
+          command -v aws
+          command -v python3
+          command -v kubectl
+          python3 - <<'PY'
+          import json, os, subprocess
+          region = os.environ['AWS_REGION']
+          def aws(*args):
+              return json.loads(subprocess.check_output(
+                  ['aws', '--region', region, '--no-cli-pager', *args, '--output', 'json'],
+                  text=True, timeout=60))
+          identity = aws('sts', 'get-caller-identity')
+          parameter = '/robot-sim/dev/access/robot-controller-deploy-role-arn'
+          role = aws('ssm', 'get-parameter', '--name', parameter)['Parameter']['Value']
+          partition = identity['Arn'].split(':')[1]
+          expected = f"arn:{partition}:iam::{identity['Account']}:role/robot-sim-dev-RobotControllerDeploy"
+          if role != expected:
+              raise SystemExit('Refusing unexpected role ARN from SSM')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'role_arn={role}\n')
+          print(f'Discovered dev deployment role from {parameter}')
+          PY
+      - name: Exchange runner identity for app dev role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ steps.discovery.outputs.role_arn }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: robot-controller-dev-${{ github.run_id }}
+      - name: Prevent metadata fallback and verify scoped identity
+        env:
+          DEV_DEPLOY_ROLE: ${{ steps.discovery.outputs.role_arn }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          echo 'AWS_EC2_METADATA_DISABLED=true' >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, subprocess
+          role = os.environ['DEV_DEPLOY_ROLE'].split(':')
+          identity = json.loads(subprocess.check_output(['aws', 'sts', 'get-caller-identity', '--output', 'json'], text=True))
+          expected = f"arn:{role[1]}:sts::{role[4]}:assumed-role/{role[5].split('/')[-1]}/"
+          if not identity['Arn'].startswith(expected):
+              raise SystemExit('Refusing deployment: unexpected AWS identity')
+          print('Verified scoped deployment role')
+          PY
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Run SSM-discovered Kubernetes smoke
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: python3 scripts/hello_ssm.py --region "$AWS_REGION"

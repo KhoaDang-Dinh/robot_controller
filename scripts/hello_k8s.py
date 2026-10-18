@@ -20,7 +20,6 @@ def main():
     manifest = json.loads((Path(__file__).resolve().parents[1]/"k8s/hello/job.json").read_text())
     if args.image:
         manifest["spec"]["template"]["spec"]["containers"][0]["image"] = args.image
-    call("get", "namespace", args.namespace)
     created = json.loads(call("create", "-f", "-", "-o", "json", data=json.dumps(manifest)))
     name = created["metadata"]["name"]
     print(f"Created {args.context}/{args.namespace}/{name}", flush=True)
