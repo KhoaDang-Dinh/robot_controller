@@ -41,15 +41,21 @@ jobs:
           summary="$(grep -E "^Summary:" colcon-test.log | tail -1)"
           echo "::notice title=colcon test::${summary:-no summary line}"
           echo "$summary" | grep -Eq "Summary: [1-9][0-9]* tests" || { echo "no tests ran" >&2; exit 1; }
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Generate a test policy on the runner (keeps test-only packages out of the image)
+        run: |
+          python -m pip install "onnx==${ONNX_VERSION}"
+          mkdir -p "$RUNNER_TEMP/policies"
+          python ros2_ws/src/robot_controller_ros/test/make_test_policy.py "$RUNNER_TEMP/policies/policy.onnx"
+          chmod -R a+rX "$RUNNER_TEMP/policies"
       - name: Integration test on ur_robot_driver mock hardware
         run: |
           set -o pipefail
-          docker run --rm --user 0 -v "$PWD/ros2_ws/src/robot_controller_ros/test:/t:ro" \
-            -e ONNX_VERSION "local/ros2:${GITHUB_SHA}" bash -c '
+          docker run --rm -v "$RUNNER_TEMP/policies:/policies:ro" "local/ros2:${GITHUB_SHA}" bash -c '
             set -eo pipefail
-            pip install -q --break-system-packages "onnx==${ONNX_VERSION}"
-            python3 /t/make_test_policy.py /tmp/policy.onnx
-            ros2 launch robot_controller_ros bringup.launch.py policy_path:=/tmp/policy.onnx > /tmp/launch.log 2>&1 &
+            ros2 launch robot_controller_ros bringup.launch.py policy_path:=/policies/policy.onnx > /tmp/launch.log 2>&1 &
             trap "cat /tmp/launch.log | tail -n 80" EXIT
             timeout 90 ros2 topic echo --once /joint_states > /dev/null
             ros2 topic pub -r 5 /policy_controller/target_pose geometry_msgs/msg/PoseStamped \
