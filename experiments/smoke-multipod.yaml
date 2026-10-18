@@ -1,0 +1,19 @@
+# Independent shards on GPU nodes: 8 shards, 2 Pods at a time.
+schema_version: 1
+name: smoke-multipod
+description: Parallel independent shards; each resumes on its own after Spot loss.
+adapter:
+  name: smoke
+  params:
+    step_seconds: 1
+policy:
+  name: noop
+seeds: [100]          # shard i uses seed 100 + i
+shards: 8
+parallelism: 2
+target_steps: 120
+checkpoint_interval_seconds: 30
+limits:
+  max_gpus: 2
+  gpus_per_shard: 1
+  active_deadline_seconds: 7200

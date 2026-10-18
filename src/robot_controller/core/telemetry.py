@@ -42,6 +42,9 @@ _RESOURCE_ENV = (
     ("robot_sim.job_id", "JOB_ID"),
     ("robot_sim.shard", "JOB_COMPLETION_INDEX"),
     ("robot_sim.experiment", "EXPERIMENT"),
+    ("robot_sim.config_sha256", "CONFIG_SHA256"),
+    ("robot_sim.adapter", "ADAPTER"),
+    ("robot_sim.policy", "POLICY"),
     ("robot_sim.cost_center", "COST_CENTER"),
     ("robot_sim.capacity_type", "CAPACITY_TYPE"),
 )

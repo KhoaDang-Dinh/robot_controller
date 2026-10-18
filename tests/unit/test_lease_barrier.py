@@ -1,15 +1,11 @@
-import importlib.util
-from pathlib import Path
-
+"""Shard leases and the restartable barrier (ported from the PR #2 indexed worker tests)."""
 import boto3
 import pytest
 from moto import mock_aws
 
-
-MODULE_PATH = Path(__file__).resolve().parents[2] / "workloads" / "indexed_resume_smoke.py"
-spec = importlib.util.spec_from_file_location("indexed_resume_smoke", MODULE_PATH)
-module = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(module)
+from robot_controller.core import lease as module
+from robot_controller.core.barrier import BarrierStopped, all_arrived, publish_arrival, wait_for_barrier
+from robot_controller.core.checkpoint import CheckpointStore
 
 
 def test_shard_indices_are_stable():
@@ -48,15 +44,9 @@ def test_claim_increments_fence_and_owns_separate_shard_rows():
         module.complete_shard(table, first, 1)
 
 
-from sync_barrier import (
-    BarrierStopped, all_arrived, publish_arrival, wait_for_barrier,
-)
-
-
 @mock_aws
 def test_spot_vm_loss_replacement_rejoins_without_restarting_survivor():
     """Survivor waits; retry of shard 1 loads its committed state and joins."""
-    from checkpoint import CheckpointStore
 
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.create_bucket(Bucket="robot-checkpoints")

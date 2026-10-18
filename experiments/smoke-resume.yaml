@@ -1,0 +1,19 @@
+# Checkpoint/resume smoke test. Baked into the image as the default experiment;
+# used by CI (dynamic + kind e2e) and by infra_robot_sim's EKS destroy/recreate test.
+# Runs until stopped (target_steps: 0), on CPU.
+schema_version: 1
+name: smoke-resume
+description: Single CPU stream; proves fenced checkpoint, suspend and resume.
+adapter:
+  name: smoke
+  params:
+    step_seconds: 1
+policy:
+  name: noop
+shards: 1
+parallelism: 1
+target_steps: 0
+checkpoint_interval_seconds: 5
+limits:
+  max_gpus: 0
+  gpus_per_shard: 0

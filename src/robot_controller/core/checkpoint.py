@@ -18,6 +18,11 @@ class CheckpointCorrupt(RuntimeError):
     """A committed checkpoint failed manifest or payload verification."""
 
 
+class CheckpointIncompatible(RuntimeError):
+    """A valid checkpoint was written by a different experiment, adapter or policy
+    (or an unsupported state version) and cannot be resumed by this code."""
+
+
 @dataclass(frozen=True)
 class CheckpointFile:
     key: str

@@ -4,14 +4,26 @@ Kubernetes workload repository for the robot thesis. See [static architecture, d
 behavior and branches](docs/BASELINE.md). Start with a CPU-only Job: no custom image,
 AWS credentials, GPU, service, ingress or persistent volume.
 
-| Path | Contents |
-|---|---|
-| `workloads/` | Checkpoint protocol, shard barrier, resume/indexed smoke workers, telemetry |
-| `containers/` | Workload Dockerfiles (non-root, pinned dependencies, OCI source label) |
-| `charts/robot-sim/` | Indexed multi-pod simulation Job ([multi-pod design](docs/MultiPodSimulation.md)) |
-| `k8s/tests/` | Resume-smoke Job template used by kind e2e here and by infra's EKS recovery test |
-| `config/images.json` | The one shared GHCR namespace and which repository builds each image |
-| `scripts/` | Hello World, SSM contract check, registry check, e2e driver, usage report |
+| Path | Contents | Changes |
+|---|---|---|
+| `src/robot_controller/core/` | Run loop, checkpoint protocol, leases, barrier, telemetry, experiment loader | rarely, full test suite |
+| `src/robot_controller/adapters/` | Simulators ("what world"): `smoke` today, Isaac Sim next | per simulator |
+| `src/robot_controller/policies/` | Controllers / learners ("what decides"): `noop`, `epsilon_greedy` | often |
+| `experiments/*.yaml` | What to run: adapter, policy, params, seeds, shards, limits | constantly |
+| `charts/robot-sim/` | Indexed Job that runs any experiment file ([multi-pod design](docs/MultiPodSimulation.md)) | rarely |
+| `containers/Dockerfile.app` | One image for all experiments, installed from `uv.lock` | rarely |
+| `k8s/tests/` | Resume-smoke Job template used by kind e2e here and by infra's EKS recovery test | rarely |
+| `config/images.json` | The one shared GHCR namespace and which repository builds each image | rarely |
+| `tests/` | `unit/`, `dynamic/`, `compat/` (golden checkpoints), `experiments/` | with the code |
+
+Start here: [how to run and add experiments](docs/EXPERIMENTS.md).
+
+```bash
+pip install uv            # or see https://docs.astral.sh/uv/
+uv sync                   # Python 3.12 venv from uv.lock (dev tools included)
+uv run robot-run validate experiments/*.yaml
+uv run pytest -q
+```
 
 Checks: [security and testing](docs/SECURITY_CHECKS.md) ·
 [observability and cost analysis](docs/OBSERVABILITY_COST.md).

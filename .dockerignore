@@ -1,5 +1,10 @@
-# Only workloads/ and its requirements are copied into images.
+# Only what the image needs.
 **
-!workloads/
-!workloads/**
-workloads/__pycache__
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!src/**
+!experiments/
+!experiments/**
+**/__pycache__

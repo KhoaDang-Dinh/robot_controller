@@ -23,7 +23,7 @@ moto_server = pytest.importorskip("moto.server")
 pytestmark = pytest.mark.dynamic
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKER = ROOT / "workloads/resume_smoke.py"
+EXPERIMENT = ROOT / "experiments/smoke-resume.yaml"
 REGION = "us-east-1"
 JOB = "dyn-test"
 DIGEST = "sha256:" + "d" * 64
@@ -82,10 +82,11 @@ def start(env, token, max_steps):
         **{k: v for k, v in os.environ.items() if not k.startswith("AWS_")},
         **env,
         "JOB_ID": JOB, "FENCING_TOKEN": str(token), "IMAGE_DIGEST": DIGEST,
-        "CHECKPOINT_INTERVAL_SECONDS": "1", "MAX_STEPS": str(max_steps),
+        "CHECKPOINT_INTERVAL_SECONDS": "1", "TARGET_STEPS": str(max_steps),
         "GIT_REVISION": "dynamic-test", "COST_CENTER": "thesis", "CAPACITY_TYPE": "spot",
+        "EXPERIMENT_FILE": str(EXPERIMENT),
     }
-    return subprocess.Popen([sys.executable, str(WORKER)], env=child_env, cwd=WORKER.parent,
+    return subprocess.Popen([sys.executable, "-m", "robot_controller.cli", "run"], env=child_env, cwd=ROOT,
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
@@ -102,7 +103,7 @@ def test_worker_resumes_from_committed_checkpoint_after_replacement(aws):
     env, clients = aws
     code, first, err = finish(start(env, token=1, max_steps=3))
     assert code == 0, err
-    assert meta(clients)["status"] == "SUSPENDED"
+    assert meta(clients)["status"] == "COMPLETED"
     assert first[-1]["event"] == "usage" and first[-1]["usage"]["steps"] == 3
     saved = int(meta(clients)["checkpoint_seq"])
 
@@ -116,6 +117,7 @@ def test_worker_resumes_from_committed_checkpoint_after_replacement(aws):
     assert code == 0, err
     resumed = next(e for e in second if e["event"] == "resumed")
     assert resumed["progress"] == 3 and resumed["sequence"] == saved
+    assert any(e["event"] == "results_written" for e in second)
     assert int(meta(clients)["checkpoint_seq"]) > saved
     assert second[-1]["usage"]["steps"] == 3  # only new work is billed to this attempt
 
@@ -134,7 +136,9 @@ def test_stale_worker_is_fenced_while_running(aws):
         UpdateExpression="SET fencing_token = :t", ExpressionAttributeValues={":t": {"N": "2"}})
     code, records, err = finish(old)
     assert code == 0, err
-    assert [r["event"] for r in records][-2:] == ["fenced", "usage"]
+    events = [r["event"] for r in records]
+    assert "fenced" in events and events[-1] == "usage"
+    assert "results_written" in events  # the wasted attempt is still recorded for cost analysis
     assert records[-1]["outcome"] == "fenced"
 
 
@@ -144,8 +148,9 @@ def test_stale_worker_cannot_start(aws):
         TableName="control", Key={"PK": {"S": f"JOB#{JOB}"}, "SK": {"S": "META"}},
         UpdateExpression="SET fencing_token = :t", ExpressionAttributeValues={":t": {"N": "2"}})
     code, records, err = finish(start(env, token=1, max_steps=3))
-    assert code != 0
-    assert "ConditionalCheckFailed" in err
+    assert code == 0, err  # external lease: fenced is a clean exit, nothing written
+    assert records[-1]["event"] == "fenced_at_start"
+    assert "ConditionalCheckFailed" in records[-1]["reason"]
     assert "checkpoint_seq" not in meta(clients)
 
 

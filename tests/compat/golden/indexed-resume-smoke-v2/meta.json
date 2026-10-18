@@ -1,0 +1,32 @@
+{
+  "PK": {
+    "S": "JOB#legacy-indexed-shard-00001"
+  },
+  "SK": {
+    "S": "META"
+  },
+  "checkpoint_manifest_key": {
+    "S": "jobs/legacy-indexed-shard-00001/attempts/1/checkpoints/000001/manifest.json"
+  },
+  "checkpoint_manifest_sha256": {
+    "S": "f322aae42989188b7c187064518644c270fe7caf912b8e6a9727ecec8700159c"
+  },
+  "checkpoint_seq": {
+    "N": "1"
+  },
+  "checkpoint_uri": {
+    "S": "s3://research/jobs/legacy-indexed-shard-00001/attempts/1/checkpoints/000001/"
+  },
+  "expected_shards": {
+    "N": "2"
+  },
+  "fencing_token": {
+    "N": "1"
+  },
+  "resume_required": {
+    "BOOL": false
+  },
+  "status": {
+    "S": "COMPLETED"
+  }
+}
