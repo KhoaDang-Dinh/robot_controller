@@ -113,7 +113,7 @@ jobs:
           grep -q 'mountPath: /dev/shm' /tmp/isaac.yaml
           grep -q 'mountPath: /isaac-sim/.cache' /tmp/isaac.yaml
           grep -q 'completions: 5' /tmp/isaac.yaml
-          grep -q 'memory: "12Gi"' /tmp/isaac.yaml
+          grep -q 'memory: "24Gi"' /tmp/isaac.yaml
       - name: Synchronized experiment renders
         run: |
           helm template smoke charts/robot-sim --set enabled=true --set job.id=ci-sync \

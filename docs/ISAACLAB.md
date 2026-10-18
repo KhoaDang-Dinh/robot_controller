@@ -51,24 +51,37 @@ adapter:
   params: {task: Isaac-Reach-UR10-v0, num_envs: 4096, env_overrides: {episode_length_s: 8.0}}
 ```
 
-## Running on the dev EKS runtime
+## Running on the dev EKS runtime (cloud first)
 
-1. Build the image: run **Build Isaac Lab training image** (Actions). It frees runner disk;
-   if the build still runs out of space, set `ISAACLAB_BUILD_RUNNER` (see the workflow header).
-   Copy the digest from the job summary.
-2. GPU node: the default chart profile requests 3 CPU, 12 GiB and 1 GPU per shard, which
-   fits a g5.xlarge. NVIDIA recommends more host RAM for Isaac Sim, so prefer g5.2xlarge
-   if memory pressure shows. The node's NVIDIA driver must meet Isaac Sim 5.1's minimum.
-3. Install, accepting the NVIDIA Omniverse License Agreement explicitly:
+Infra side (infra_robot_sim, see its `docs/GPU_TRAINING.md`): g5.2xlarge GPU pools
+(Isaac Sim 5.1 needs at least 32 GB host RAM), the NVIDIA device plugin, and a
+**Scale dev GPU pool** workflow.
+
+1. **Image**: once this lands on `dev`, **Build Isaac Lab training image** runs on its
+   own. It can also be started by hand from `dev`. Copy the digest from the job summary.
+   If the hosted runner runs out of disk, set `ISAACLAB_BUILD_RUNNER` (see the workflow header).
+2. **Runtime**: in infra_robot_sim run **Start dev EKS runtime**, then **Scale dev GPU pool**
+   (`gpu-spot`, desired = the experiment's `parallelism`, 2 for `ur10-reach-ppo`).
+3. **Train**: run **Train on dev EKS** here, from `dev`:
+   `action=install`, `experiment=experiments/ur10-reach-ppo.yaml`, a new `job_id`, the
+   image digest, and the NVIDIA EULA checkbox. The workflow uses the scoped deploy role
+   and waits until Pods are Running. It warns if no GPU is schedulable (pool not scaled,
+   or the device plugin is not running) and writes status and telemetry to the summary.
+4. **Follow**: `action=status` with the same `job_id`. Results and artifacts land in
+   `s3://<research bucket>/results/ur10-reach-ppo/<job_id>/`.
+5. **Resume**: after an interruption that exhausted the Job's retries, use
+   `action=reinstall` with the same `job_id` and digest. Shards continue from their
+   last committed checkpoints.
+6. **Stop paying**: **Scale dev GPU pool** to 0, then **Stop dev EKS runtime**.
+
+The equivalent manual command:
 
 ```bash
-uv run robot-run validate experiments/ur10-reach-ppo.yaml
-helm install ur10-001 charts/robot-sim -n robot-platform \
+helm install train-ur10-001 charts/robot-sim -n robot-platform \
   --set enabled=true --set job.id=ur10-001 \
   --set-file experiment=experiments/ur10-reach-ppo.yaml \
   --set image.repository=ghcr.io/khoadang-dinh/robot-sim-isaaclab \
-  --set image.digest=sha256:<digest> --set image.pullSecrets[0].name=ghcr-pull \
-  --set isaacsim.acceptEula=true
+  --set image.digest=sha256:<digest> --set isaacsim.acceptEula=true
 ```
 
 The chart's Isaac Lab profile runs as Isaac Sim's rootless user (1234). It adds a

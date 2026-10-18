@@ -2,14 +2,16 @@ name: ROS 2 (policy node + UR driver)
 # Builds the robot-side image (ROS 2 Jazzy + ur_robot_driver + policy node), runs
 # the package tests, then an integration test against ur_robot_driver's mock
 # hardware: the node must stay silent until armed, then drive the
-# forward_position_controller. Pushes the image to GHCR from dev.
+# forward_position_controller. Optionally pushes the image to GHCR from dev.
+# Edge CI is deliberately manual until the cloud training path is proven on EKS
+# (priority: cloud first). Re-enable pull_request/push triggers when moving to the edge.
 on:
-  pull_request:
-    paths: ['ros2_ws/**', 'containers/Dockerfile.ros2', 'containers/ros2_entrypoint.sh', '.github/workflows/ros2.yml']
-  push:
-    branches: [dev]
-    paths: ['ros2_ws/**', 'containers/Dockerfile.ros2', 'containers/ros2_entrypoint.sh', '.github/workflows/ros2.yml']
   workflow_dispatch:
+    inputs:
+      push_image:
+        description: Push the image to GHCR (dev branch only)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -86,7 +88,7 @@ jobs:
           trivy image --scanners vuln,secret --ignorefile .trivyignore \
             --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "local/ros2:${GITHUB_SHA}"
       - name: Push to GHCR (dev only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        if: inputs.push_image && github.ref == 'refs/heads/dev'
         env:
           GH_TOKEN: ${{ github.token }}
           ACTOR: ${{ github.actor }}
