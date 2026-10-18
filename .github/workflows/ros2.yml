@@ -33,12 +33,17 @@ jobs:
         run: docker build --pull -f containers/Dockerfile.ros2 -t "local/ros2:${GITHUB_SHA}" .
       - name: Package tests (colcon test)
         run: |
+          set -o pipefail
           docker run --rm --user 0 "local/ros2:${GITHUB_SHA}" bash -c '
             set -euo pipefail
             cd /ws && colcon test --packages-select robot_controller_ros --event-handlers console_direct+ \
-              && colcon test-result --verbose'
+              && colcon test-result --verbose' 2>&1 | tee colcon-test.log
+          summary="$(grep -E "^Summary:" colcon-test.log | tail -1)"
+          echo "::notice title=colcon test::${summary:-no summary line}"
+          echo "$summary" | grep -Eq "Summary: [1-9][0-9]* tests" || { echo "no tests ran" >&2; exit 1; }
       - name: Integration test on ur_robot_driver mock hardware
         run: |
+          set -o pipefail
           docker run --rm --user 0 -v "$PWD/ros2_ws/src/robot_controller_ros/test:/t:ro" \
             -e ONNX_VERSION "local/ros2:${GITHUB_SHA}" bash -c '
             set -eo pipefail
@@ -58,7 +63,16 @@ jobs:
             ros2 service call /policy_controller/arm std_srvs/srv/SetBool "{data: true}"
             timeout 30 ros2 topic echo --once /forward_position_controller/commands
             timeout 10 ros2 topic echo --once /policy_controller/status
-            echo PASS'
+            echo PASS' 2>&1 | tee integration.log
+      - name: Diagnostics (as annotations, readable from the checks API)
+        if: failure()
+        run: |
+          for f in colcon-test.log integration.log; do
+            [ -f "$f" ] || continue
+            body="$(tail -c 3500 "$f")"
+            body="${body//'%'/'%25'}"; body="${body//$'\r'/'%0D'}"; body="${body//$'\n'/'%0A'}"
+            echo "::error title=${f}::${body}"
+          done
       - name: Install pinned, checksum-verified Trivy
         run: bash scripts/install_trivy.sh
       - name: Trivy image scan (fixable HIGH/CRITICAL)
