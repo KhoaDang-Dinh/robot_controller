@@ -29,3 +29,22 @@ class Policy(Protocol):
     def save_state(self) -> dict[str, bytes]: ...
 
     def load_state(self, files: dict[str, bytes], state_version: int) -> None: ...
+
+
+class VectorizedLearner(Protocol):
+    """A learner that drives a vectorized adapter itself (e.g. PPO over 4096 Isaac Lab envs).
+
+    The runner calls ``train_step(adapter)`` instead of act/step/learn; one call is one
+    unit of progress (``target_steps`` counts these). Recovery stays in the runner.
+    """
+    name: ClassVar[str]
+    state_version: ClassVar[int]
+
+    def train_step(self, adapter: Any) -> dict[str, float]: ...
+
+    def save_state(self) -> dict[str, bytes]: ...
+
+    def load_state(self, files: dict[str, bytes], state_version: int) -> None: ...
+
+    def artifacts(self) -> dict[str, bytes]:
+        """Optional: exported models uploaded with the results (e.g. policy/policy.onnx)."""

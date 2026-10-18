@@ -3,4 +3,4 @@ from robot_controller.plugins import Registry
 
 POLICIES = Registry("policy")
 
-from robot_controller.policies import epsilon_greedy, noop  # noqa: E402,F401
+from robot_controller.policies import epsilon_greedy, noop, rsl_rl_ppo  # noqa: E402,F401

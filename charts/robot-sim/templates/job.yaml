@@ -10,6 +10,14 @@
 {{- if not (regexMatch "^[a-zA-Z0-9]([-_.a-zA-Z0-9]{0,61}[a-zA-Z0-9])?$" .Values.cost.costCenter) }}{{ fail "cost.costCenter must be a valid label value" }}{{ end }}
 {{- if not (has .Values.scheduling.purchase (list "spot" "on-demand")) }}{{ fail "scheduling.purchase must be spot or on-demand" }}{{ end }}
 {{- $gpus := int $exp.gpus }}
+{{- $isaac := eq $exp.adapter "isaaclab" }}
+{{- if $isaac }}
+{{- if not .Values.isaacsim.acceptEula }}{{ fail "Isaac Lab experiments run NVIDIA Isaac Sim: review the NVIDIA Omniverse License Agreement and set isaacsim.acceptEula=true" }}{{ end }}
+{{- if not (hasSuffix .Values.isaacsim.repositorySuffix .Values.image.repository) }}{{ fail (printf "adapter isaaclab needs the Isaac Lab image (repository ending in %s)" .Values.isaacsim.repositorySuffix) }}{{ end }}
+{{- if lt $gpus 1 }}{{ fail "adapter isaaclab needs limits.gpus_per_shard >= 1" }}{{ end }}
+{{- end }}
+{{- $uid := ternary 1234 10001 $isaac }}
+{{- $resources := ternary .Values.isaacsim.resources .Values.resources $isaac }}
 {{- $capacity := ternary .Values.scheduling.purchase "cpu" (gt $gpus 0) }}
 {{- $configSha := substr 0 16 $exp.sha }}
 apiVersion: batch/v1
@@ -56,9 +64,9 @@ spec:
       restartPolicy: Never
       securityContext:
         runAsNonRoot: true
-        runAsUser: 10001
-        runAsGroup: 10001
-        fsGroup: 10001
+        runAsUser: {{ $uid }}
+        runAsGroup: {{ $uid }}
+        fsGroup: {{ $uid }}
         seccompProfile:
           type: RuntimeDefault
       terminationGracePeriodSeconds: 110
@@ -90,6 +98,10 @@ spec:
           imagePullPolicy: IfNotPresent
           args: ["run"]
           env:
+            {{- if $isaac }}
+            - name: ACCEPT_EULA
+              value: "Y"
+            {{- end }}
             - name: EXPERIMENT_FILE
               value: /etc/robot/experiment.yaml
             - name: AWS_REGION
@@ -109,7 +121,7 @@ spec:
             - name: GIT_REVISION
               value: {{ .Values.gitRevision | quote }}
             - name: HOME
-              value: /work
+              value: {{ ternary "/isaac-sim" "/work" $isaac | quote }}
             # Telemetry resource attributes (see core/telemetry.py).
             - name: OTEL_SERVICE_NAME
               value: {{ .Values.observability.serviceName | quote }}
@@ -141,14 +153,14 @@ spec:
                   fieldPath: spec.nodeName
           resources:
             requests:
-              cpu: {{ .Values.resources.requests.cpu | quote }}
-              memory: {{ .Values.resources.requests.memory | quote }}
+              cpu: {{ $resources.requests.cpu | quote }}
+              memory: {{ $resources.requests.memory | quote }}
               {{- if gt $gpus 0 }}
               nvidia.com/gpu: {{ $gpus }}
               {{- end }}
             limits:
-              cpu: {{ .Values.resources.limits.cpu | quote }}
-              memory: {{ .Values.resources.limits.memory | quote }}
+              cpu: {{ $resources.limits.cpu | quote }}
+              memory: {{ $resources.limits.memory | quote }}
               {{- if gt $gpus 0 }}
               nvidia.com/gpu: {{ $gpus }}
               {{- end }}
@@ -160,12 +172,31 @@ spec:
               mountPath: /work
             - name: tmp
               mountPath: /tmp
+            {{- if $isaac }}
+            - name: dshm
+              mountPath: /dev/shm
+            - name: isaac-cache
+              mountPath: /isaac-sim/.cache
+              subPath: cache
+            - name: isaac-cache
+              mountPath: /isaac-sim/.nv/ComputeCache
+              subPath: computecache
+            - name: isaac-cache
+              mountPath: /isaac-sim/.nvidia-omniverse
+              subPath: omniverse
+            - name: isaac-cache
+              mountPath: /isaac-sim/.local/share/ov
+              subPath: ov
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            # Isaac Sim writes into its install tree (kit caches/logs) at start-up, so
+            # the Isaac Lab profile keeps a writable root filesystem; all other
+            # hardening (non-root, no capabilities, seccomp) still applies.
+            readOnlyRootFilesystem: {{ not $isaac }}
             runAsNonRoot: true
-            runAsUser: 10001
-            runAsGroup: 10001
+            runAsUser: {{ $uid }}
+            runAsGroup: {{ $uid }}
             seccompProfile:
               type: RuntimeDefault
             capabilities:
@@ -178,4 +209,17 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if $isaac }}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.isaacsim.shmSize | quote }}
+        - name: isaac-cache
+          {{- if .Values.isaacsim.cachePvc }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.isaacsim.cachePvc | quote }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
 {{- end }}

@@ -1,0 +1,102 @@
+name: ROS 2 (policy node + UR driver)
+# Builds the robot-side image (ROS 2 Jazzy + ur_robot_driver + policy node), runs
+# the package tests, then an integration test against ur_robot_driver's mock
+# hardware: the node must stay silent until armed, then drive the
+# forward_position_controller. Optionally pushes the image to GHCR from dev.
+# Edge CI is deliberately manual until the cloud training path is proven on EKS
+# (priority: cloud first). Re-enable pull_request/push triggers when moving to the edge.
+on:
+  workflow_dispatch:
+    inputs:
+      push_image:
+        description: Push the image to GHCR (dev branch only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: ros2-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  IMAGE: ghcr.io/khoadang-dinh/robot-ros2
+  ONNX_VERSION: "1.23.1"
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build
+        run: docker build --pull -f containers/Dockerfile.ros2 -t "local/ros2:${GITHUB_SHA}" .
+      - name: Package tests (colcon test)
+        run: |
+          set -o pipefail
+          docker run --rm --user 0 "local/ros2:${GITHUB_SHA}" bash -c '
+            set -euo pipefail
+            cd /ws && colcon test --packages-select robot_controller_ros --event-handlers console_direct+ \
+              && colcon test-result --verbose' 2>&1 | tee colcon-test.log
+          summary="$(grep -E "^Summary:" colcon-test.log | tail -1)"
+          echo "::notice title=colcon test::${summary:-no summary line}"
+          echo "$summary" | grep -Eq "Summary: [1-9][0-9]* tests" || { echo "no tests ran" >&2; exit 1; }
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Generate a test policy on the runner (keeps test-only packages out of the image)
+        run: |
+          python -m pip install "onnx==${ONNX_VERSION}"
+          mkdir -p "$RUNNER_TEMP/policies"
+          python ros2_ws/src/robot_controller_ros/test/make_test_policy.py "$RUNNER_TEMP/policies/policy.onnx"
+          chmod -R a+rX "$RUNNER_TEMP/policies"
+      - name: Integration test on ur_robot_driver mock hardware
+        run: |
+          set -o pipefail
+          docker run --rm -v "$RUNNER_TEMP/policies:/policies:ro" "local/ros2:${GITHUB_SHA}" bash -c '
+            set -eo pipefail
+            ros2 launch robot_controller_ros bringup.launch.py policy_path:=/policies/policy.onnx > /tmp/launch.log 2>&1 &
+            trap "cat /tmp/launch.log | tail -n 80" EXIT
+            timeout 90 ros2 topic echo --once /joint_states > /dev/null
+            ros2 topic pub -r 5 /policy_controller/target_pose geometry_msgs/msg/PoseStamped \
+              "{header: {frame_id: base_link}, pose: {position: {x: 0.5, y: 0.0, z: 0.3}, orientation: {x: 0.0, y: 0.7071068, z: 0.0, w: 0.7071068}}}" > /dev/null &
+            echo "-- disarmed: proposals only"
+            timeout 30 ros2 topic echo --once /policy_controller/proposed_command
+            if timeout 5 ros2 topic echo --once /forward_position_controller/commands > /dev/null; then
+              echo "policy commanded the robot while disarmed" >&2; exit 1
+            fi
+            echo "-- armed: commands reach the controller"
+            ros2 service call /policy_controller/arm std_srvs/srv/SetBool "{data: true}"
+            timeout 30 ros2 topic echo --once /forward_position_controller/commands
+            timeout 10 ros2 topic echo --once /policy_controller/status
+            echo PASS' 2>&1 | tee integration.log
+      - name: Diagnostics (as annotations, readable from the checks API)
+        if: failure()
+        run: |
+          for f in colcon-test.log integration.log; do
+            [ -f "$f" ] || continue
+            body="$(tail -c 3500 "$f")"
+            body="${body//'%'/'%25'}"; body="${body//$'\r'/'%0D'}"; body="${body//$'\n'/'%0A'}"
+            echo "::error title=${f}::${body}"
+          done
+      - name: Install pinned, checksum-verified Trivy
+        run: bash scripts/install_trivy.sh
+      - name: Trivy image scan (fixable HIGH/CRITICAL)
+        run: |
+          trivy image --scanners vuln,secret --ignorefile .trivyignore \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "local/ros2:${GITHUB_SHA}"
+      - name: Push to GHCR (dev only)
+        if: inputs.push_image && github.ref == 'refs/heads/dev'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
+          docker tag "local/ros2:${GITHUB_SHA}" "$IMAGE:${GITHUB_SHA}"
+          docker push "$IMAGE:${GITHUB_SHA}"
+          DIGEST="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:${GITHUB_SHA}" | cut -d@ -f2)"
+          echo "$DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'
+          echo "Robot-side image: \`$IMAGE@$DIGEST\`" >> "$GITHUB_STEP_SUMMARY"
+          docker logout ghcr.io

@@ -97,14 +97,12 @@ version, so a rollback never misreads data written by newer code.
 
 ## Adding a simulator adapter
 
-The steps are the same, under `adapters/` with `@ADAPTERS.register(...)`:
-`reset`, `observation`, `step`, `save_state`, `load_state`, `close`. For Isaac Sim:
-
-* Put the USD scene and asset revision in `save_state()` and check it in `load_state()`.
-* Change `BASE_IMAGE` in `containers/Dockerfile.app` to an Isaac Sim / CUDA image
-  pinned by digest. Code changes then rebuild only the thin layers on top.
-* Use `limits.gpus_per_shard >= 1`. The chart then schedules onto GPU nodes and
-  requests `nvidia.com/gpu`.
+Use the same steps under `adapters/` with `@ADAPTERS.register(...)`. `isaaclab.py` is the
+GPU example (see [ISAACLAB.md](ISAACLAB.md)): it imports the simulator lazily, so
+validation and CI run without it. It also hands the vectorized env to a *vectorized
+learner* policy (`train_step(adapter)`) instead of being stepped one action at a time.
+Adapters that serve deployment should provide `artifacts()`, for example
+`deploy/spec.json`, so the robot side reproduces the training conventions exactly.
 
 ## Compatibility rules
 

@@ -3,7 +3,7 @@ name = "robot-controller"
 version = "0.2.0"
 description = "Robot simulation workloads: stable recovery core with pluggable simulators and policies"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"  # 3.11 = Isaac Sim 5.1 interpreter
 # Runtime dependencies shipped in the image. Ranges here; exact versions + hashes in uv.lock.
 dependencies = [
   "boto3>=1.40,<2",
@@ -45,7 +45,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 120
 extend-exclude = [".venv"]
 
@@ -58,6 +58,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"ros2_ws/src/*/test/**" = ["S101", "E501"]
 "tests/**" = ["S101", "S106", "S603", "S607", "S108", "B017", "E701", "E402"]
 "scripts/**" = ["S603", "S607"]
 

@@ -1,0 +1,34 @@
+# Robot-side image: ROS 2 Jazzy + Universal Robots driver + the policy node (ONNX, CPU).
+# Runs on the lab PC next to the UR10 (host networking for DDS), never in the cloud.
+#
+#   docker build -f containers/Dockerfile.ros2 -t ghcr.io/khoadang-dinh/robot-ros2:dev .
+#   docker run --rm -it --network host -v $PWD/policies:/policies:ro ghcr.io/khoadang-dinh/robot-ros2:dev \
+#     ros2 launch robot_controller_ros bringup.launch.py policy_path:=/policies/policy.onnx
+ARG ROS_IMAGE=ros:jazzy-ros-base
+FROM ${ROS_IMAGE}
+ARG ONNXRUNTIME_VERSION=1.30.0
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ros-jazzy-ur python3-pip python3-numpy python3-pytest \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --break-system-packages "onnxruntime==${ONNXRUNTIME_VERSION}"
+
+COPY ros2_ws/src /ws/src
+WORKDIR /ws
+RUN . /opt/ros/jazzy/setup.sh \
+    && colcon build --event-handlers console_direct+ \
+    && rm -rf build log
+
+RUN groupadd --gid 10001 robot && useradd --create-home --uid 10001 --gid 10001 robot \
+    && printf 'source /opt/ros/jazzy/setup.bash\nsource /ws/install/setup.bash\n' >> /home/robot/.bashrc
+COPY containers/ros2_entrypoint.sh /ros2_entrypoint.sh
+
+LABEL org.opencontainers.image.source="https://github.com/KhoaDang-Dinh/robot_controller" \
+      org.opencontainers.image.title="robot-ros2" \
+      org.opencontainers.image.description="ROS 2 Jazzy + ur_robot_driver + robot_controller policy node" \
+      org.opencontainers.image.licenses="NOASSERTION"
+USER 10001:10001
+WORKDIR /home/robot
+HEALTHCHECK NONE
+ENTRYPOINT ["/ros2_entrypoint.sh"]
+CMD ["bash"]

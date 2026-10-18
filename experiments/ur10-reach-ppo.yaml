@@ -1,0 +1,26 @@
+# UR10 end-effector reaching with PPO (rsl_rl) on Isaac Lab, 5 independent seeds.
+# One runner step = 10 PPO iterations; 100 steps = Isaac Lab's default 1000 iterations.
+# Image: ghcr.io/khoadang-dinh/robot-sim-isaaclab (Isaac Lab v2.3.2 / Isaac Sim 5.1.0).
+schema_version: 1
+name: ur10-reach-ppo
+description: Isaac-Reach-UR10-v0, rsl_rl PPO defaults, 4096 envs per GPU, 5 seeds.
+adapter:
+  name: isaaclab
+  params:
+    task: Isaac-Reach-UR10-v0
+    num_envs: 4096
+    device: cuda:0
+policy:
+  name: rsl_rl_ppo
+  params:
+    iterations_per_step: 10
+    overrides: {}
+seeds: [1, 2, 3, 4, 5]
+shards: 5
+parallelism: 2
+target_steps: 100
+checkpoint_interval_seconds: 300
+limits:
+  max_gpus: 2
+  gpus_per_shard: 1
+  active_deadline_seconds: 14400

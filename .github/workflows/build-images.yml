@@ -38,7 +38,9 @@ jobs:
           config = json.load(open("config/images.json"))
           registry = config["registry"]
           assert registry == registry.lower(), "GHCR names must be lowercase"
-          ours = {n: s for n, s in config["images"].items() if s["owner"] == "robot_controller"}
+          # The CPU application image only; Isaac Lab and ROS 2 images have their own workflows.
+          ours = {n: s for n, s in config["images"].items()
+                  if s["owner"] == "robot_controller" and s.get("dockerfile") == "containers/Dockerfile.app"}
           dockerfiles = {s["dockerfile"] for s in ours.values()}
           assert len(dockerfiles) == 1, "expected one application image"
           with open(os.environ["GITHUB_ENV"], "a") as env:

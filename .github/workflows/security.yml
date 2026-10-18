@@ -98,9 +98,17 @@ jobs:
       - name: Trivy Kubernetes misconfigurations (rendered chart)
         run: |
           for experiment in experiments/*.yaml; do
-            trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
-              --helm-set enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
-              --helm-set-file experiment="$experiment" charts/robot-sim
+            ignore=.trivyignore
+            set_values="enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            if grep -Eq '^\s+name:\s*isaaclab\s*$' "$experiment"; then
+              cat .trivyignore .trivyignore-isaaclab > /tmp/trivyignore-isaaclab
+              ignore=/tmp/trivyignore-isaaclab
+              set_values="$set_values,isaacsim.acceptEula=true,image.repository=ghcr.io/khoadang-dinh/robot-sim-isaaclab"
+            fi
+            echo "::group::$experiment"
+            trivy config --ignorefile "$ignore" --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
+              --helm-set "$set_values" --helm-set-file experiment="$experiment" charts/robot-sim
+            echo "::endgroup::"
           done
       - name: Trivy SARIF for code scanning
         if: always()

@@ -47,6 +47,24 @@ scheduling:
   # (limits.gpus_per_shard: 0).
   purchase: spot
 
+# Isaac Lab experiments (adapter: isaaclab) run the Isaac Sim based image as its
+# rootless user (1234) with writable caches. Requires accepting the NVIDIA
+# Omniverse License Agreement explicitly; privacy/data-collection consent is never set.
+isaacsim:
+  acceptEula: false
+  repositorySuffix: /robot-sim-isaaclab
+  shmSize: 4Gi
+  # Shader/kit caches are rebuilt on every Pod start unless a PVC is provided.
+  cachePvc: ""
+  # Sized for one Pod per g5.2xlarge (8 vCPU, 32 GiB; Isaac Sim 5.1 needs >= 32 GB host RAM).
+  resources:
+    requests:
+      cpu: "6000m"
+      memory: "24Gi"
+    limits:
+      cpu: "7500m"
+      memory: "28Gi"
+
 resources:
   requests:
     cpu: "1000m"

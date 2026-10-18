@@ -1,0 +1,190 @@
+name: Train on dev EKS
+# Installs one experiment as a Helm release of charts/robot-sim in robot-platform,
+# using the scoped RobotControllerDeploy role (namespace-limited EKS edit access).
+#
+# Before: Start dev EKS runtime, then Scale dev GPU pool (infra_robot_sim) to the
+# experiment's parallelism. After: Scale dev GPU pool to 0 and Stop dev EKS runtime.
+#
+#   install    new run (fails if the release already exists)
+#   reinstall  uninstall + install with the SAME job id: resumes from the last
+#              committed checkpoints (e.g. after Spot exhausted the Job's retries)
+#   status     Pod/Job status and recent logs
+#   uninstall  remove the release (checkpoints and results stay in S3)
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [install, reinstall, status, uninstall]
+        default: install
+        required: true
+      experiment:
+        description: Experiment file, e.g. experiments/ur10-reach-ppo.yaml
+        default: experiments/ur10-reach-ppo.yaml
+        required: true
+        type: string
+      job_id:
+        description: Run id (DNS label, <= 40 chars). Reuse only to resume the same run.
+        required: true
+        type: string
+      image_digest:
+        description: sha256 digest from the image build summary (install/reinstall)
+        required: false
+        type: string
+      purchase:
+        type: choice
+        options: [spot, on-demand]
+        default: spot
+        required: true
+      accept_isaac_sim_eula:
+        description: I have reviewed and accept the NVIDIA Omniverse License Agreement (Isaac Lab experiments)
+        type: boolean
+        default: false
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: robot-controller-dev-deploy
+  cancel-in-progress: false
+jobs:
+  train:
+    if: github.ref == 'refs/heads/dev'
+    runs-on: [self-hosted, linux, x64, robot-sim-admin]
+    environment: dev
+    timeout-minutes: 30
+    env:
+      NAMESPACE: robot-platform
+    steps:
+      - name: Validate inputs
+        env:
+          ACTION: ${{ inputs.action }}
+          EXPERIMENT: ${{ inputs.experiment }}
+          JOB_ID: ${{ inputs.job_id }}
+          DIGEST: ${{ inputs.image_digest }}
+        run: |
+          echo "$JOB_ID" | grep -Eq '^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$' || { echo "bad job_id" >&2; exit 1; }
+          echo "$EXPERIMENT" | grep -Eq '^experiments/[a-z0-9-]+\.yaml$' || { echo "bad experiment path" >&2; exit 1; }
+          if [ "$ACTION" = install ] || [ "$ACTION" = reinstall ]; then
+            echo "$DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$' || { echo "image_digest required (sha256:...)" >&2; exit 1; }
+          fi
+      - name: Discover dev deployment role from SSM
+        id: discovery
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          test -n "$AWS_REGION"
+          python3 - <<'PY'
+          import json, os, subprocess
+          region = os.environ['AWS_REGION']
+          def aws(*args):
+              return json.loads(subprocess.check_output(
+                  ['aws', '--region', region, '--no-cli-pager', *args, '--output', 'json'], text=True, timeout=60))
+          identity = aws('sts', 'get-caller-identity')
+          role = aws('ssm', 'get-parameter', '--name', '/robot-sim/dev/access/robot-controller-deploy-role-arn')['Parameter']['Value']
+          partition = identity['Arn'].split(':')[1]
+          if role != f"arn:{partition}:iam::{identity['Account']}:role/robot-sim-dev-RobotControllerDeploy":
+              raise SystemExit('Refusing unexpected role ARN from SSM')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'role_arn={role}\n')
+          PY
+      - name: Exchange runner identity for app dev role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ steps.discovery.outputs.role_arn }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: robot-controller-train-${{ github.run_id }}
+      - name: Prevent metadata fallback
+        run: echo 'AWS_EC2_METADATA_DISABLED=true' >> "$GITHUB_ENV"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.19.0
+      - name: Cluster from the SSM contract (temporary kubeconfig)
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          CONTRACT="$(aws ssm get-parameter --region "$AWS_REGION" --name /robot-sim/dev/contracts/kubernetes/v1 \
+            --query Parameter.Value --output text)"
+          CLUSTER="$(echo "$CONTRACT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["cluster_name"])')"
+          REGISTRY="$(echo "$CONTRACT" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("container_registry",""))')"
+          EXPECTED="$(python3 -c 'import json; print(json.load(open("config/images.json"))["registry"])')"
+          [ "$REGISTRY" = "$EXPECTED" ] || { echo "contract registry '$REGISTRY' != '$EXPECTED'" >&2; exit 1; }
+          KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          aws eks update-kubeconfig --region "$AWS_REGION" --name "$CLUSTER" --kubeconfig "$KUBECONFIG" > /dev/null
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+          echo "REGISTRY=$REGISTRY" >> "$GITHUB_ENV"
+      - name: Uninstall
+        if: inputs.action == 'uninstall' || inputs.action == 'reinstall'
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          helm uninstall "train-${JOB_ID}" -n "$NAMESPACE" --wait || echo "release train-${JOB_ID} not found"
+      - name: Install
+        if: inputs.action == 'install' || inputs.action == 'reinstall'
+        env:
+          EXPERIMENT: ${{ inputs.experiment }}
+          JOB_ID: ${{ inputs.job_id }}
+          DIGEST: ${{ inputs.image_digest }}
+          PURCHASE: ${{ inputs.purchase }}
+          ACCEPT_EULA: ${{ inputs.accept_isaac_sim_eula }}
+        run: |
+          EXTRA=()
+          if grep -Eq '^\s+name:\s*isaaclab\s*$' "$EXPERIMENT"; then
+            [ "$ACCEPT_EULA" = "true" ] || { echo "Isaac Lab experiment: accept_isaac_sim_eula must be checked" >&2; exit 1; }
+            EXTRA+=(--set "image.repository=${REGISTRY}/robot-sim-isaaclab" --set isaacsim.acceptEula=true)
+          else
+            EXTRA+=(--set "image.repository=${REGISTRY}/robot-sim-worker")
+          fi
+          if kubectl -n "$NAMESPACE" get secret ghcr-pull > /dev/null 2>&1; then
+            EXTRA+=(--set "image.pullSecrets[0].name=ghcr-pull")
+          fi
+          helm install "train-${JOB_ID}" charts/robot-sim -n "$NAMESPACE" \
+            --set enabled=true --set "job.id=${JOB_ID}" --set-file "experiment=${EXPERIMENT}" \
+            --set "image.digest=${DIGEST}" --set "gitRevision=${GITHUB_SHA}" \
+            --set "scheduling.purchase=${PURCHASE}" "${EXTRA[@]}"
+          {
+            echo "### Installed train-${JOB_ID}"
+            echo "- experiment: \`${EXPERIMENT}\` @ \`${GITHUB_SHA}\`"
+            echo "- image: \`${DIGEST}\` (${PURCHASE})"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for Pods to be scheduled and started
+        if: inputs.action == 'install' || inputs.action == 'reinstall'
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          SELECTOR="robot-sim/job-id=${JOB_ID}"
+          for _ in $(seq 1 60); do
+            PHASES="$(kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}')"
+            echo "pods: $(echo "$PHASES" | sort | uniq -c | tr '\n' ' ')"
+            if echo "$PHASES" | grep -q Running; then break; fi
+            if kubectl -n "$NAMESPACE" get events --field-selector reason=FailedScheduling -o jsonpath='{.items[*].message}' \
+                | grep -q "nvidia.com/gpu"; then
+              echo "::warning title=No schedulable GPU::Scale dev GPU pool for '${{ inputs.purchase }}', and check the NVIDIA device plugin is Running."
+            fi
+            sleep 20
+          done
+          kubectl -n "$NAMESPACE" get job,pods -l "$SELECTOR" -o wide
+          kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp | tail -n 15
+          echo "$PHASES" | grep -q Running || { echo "no Pod reached Running within 20 minutes" >&2; exit 1; }
+      - name: Status and recent logs
+        if: always() && inputs.action != 'uninstall'
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          SELECTOR="robot-sim/job-id=${JOB_ID}"
+          {
+            echo "### train-${JOB_ID}"
+            echo '```'
+            kubectl -n "$NAMESPACE" get job,pods -l "$SELECTOR" 2>&1 || true
+            echo '```'
+            echo "Recent telemetry:"
+            echo '```'
+            kubectl -n "$NAMESPACE" logs -l "$SELECTOR" --all-containers --prefix --tail=8 --max-log-requests=10 2>&1 \
+              | grep -E '"event":"(resumed|checkpoint|suspended|completed|fenced|usage|incompatible_checkpoint)"|Error|Traceback' \
+              | tail -n 30 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

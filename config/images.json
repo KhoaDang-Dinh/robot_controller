@@ -14,6 +14,16 @@
     "robot-controller": {
       "owner": "infra_robot_sim",
       "note": "Built from infra_robot_sim platform/control until the controller migration lands."
+    },
+    "robot-sim-isaaclab": {
+      "owner": "robot_controller",
+      "dockerfile": "containers/Dockerfile.isaaclab",
+      "note": "Isaac Sim 5.1.0 + Isaac Lab v2.3.2 training image; built by build-isaaclab.yml."
+    },
+    "robot-ros2": {
+      "owner": "robot_controller",
+      "dockerfile": "containers/Dockerfile.ros2",
+      "note": "ROS 2 Jazzy + ur_robot_driver + policy node, for the lab PC; built by ros2.yml."
     }
   }
 }

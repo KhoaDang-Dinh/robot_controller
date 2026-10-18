@@ -1,0 +1,11 @@
+policy_controller:
+  ros__parameters:
+    # Targets on ~/target_pose must be expressed in this frame. VERIFY it is the frame
+    # the policy was trained in (the Isaac Lab robot root): compare forward kinematics
+    # of one joint configuration in sim and in ROS (tf2_echo base_link tool0) before arming.
+    base_frame: base_link
+    command_topic: /forward_position_controller/commands
+    controller_joints: [shoulder_pan_joint, shoulder_lift_joint, elbow_joint, wrist_1_joint, wrist_2_joint, wrist_3_joint]
+    max_joint_step: 0.05        # rad per control tick (0.05 at 30 Hz = 1.5 rad/s cap)
+    joint_state_timeout: 0.1    # s; older joint state -> hold
+    target_timeout: 0.0         # s; 0 = target valid until replaced

@@ -21,5 +21,6 @@ needs to render a safe Job.
 {{- if lt $gpus 0 }}{{ fail "experiment.limits.gpus_per_shard must be >= 0" }}{{ end -}}
 {{- if gt (mul $parallelism $gpus) (int (get $limits "max_gpus")) }}{{ fail "parallelism x gpus_per_shard exceeds experiment.limits.max_gpus" }}{{ end -}}
 {{- if and (get $exp "sync") (ne $parallelism $shards) }}{{ fail "experiment.sync requires parallelism == shards (and enough actual GPU nodes)" }}{{ end -}}
-{{- dict "name" $name "shards" $shards "parallelism" $parallelism "gpus" $gpus "deadline" $deadline "sha" (sha256sum $raw) | toJson -}}
+{{- $adapter := toString (get (default dict (get $exp "adapter")) "name") -}}
+{{- dict "name" $name "adapter" $adapter "shards" $shards "parallelism" $parallelism "gpus" $gpus "deadline" $deadline "sha" (sha256sum $raw) | toJson -}}
 {{- end -}}

@@ -7,16 +7,17 @@ AWS credentials, GPU, service, ingress or persistent volume.
 | Path | Contents | Changes |
 |---|---|---|
 | `src/robot_controller/core/` | Run loop, checkpoint protocol, leases, barrier, telemetry, experiment loader | rarely, full test suite |
-| `src/robot_controller/adapters/` | Simulators ("what world"): `smoke` today, Isaac Sim next | per simulator |
-| `src/robot_controller/policies/` | Controllers / learners ("what decides"): `noop`, `epsilon_greedy` | often |
+| `src/robot_controller/adapters/` | Simulators ("what world"): `isaaclab` (Isaac Lab v2.3.2 / Isaac Sim 5.1), `smoke` (CPU, CI) | per simulator |
+| `src/robot_controller/policies/` | Learners / controllers ("what decides"): `rsl_rl_ppo`, `noop`, `epsilon_greedy` | often |
+| `ros2_ws/src/robot_controller_ros/` | ROS 2 Jazzy node that runs an exported policy on the UR10 via ur_robot_driver | per deployment |
 | `experiments/*.yaml` | What to run: adapter, policy, params, seeds, shards, limits | constantly |
 | `charts/robot-sim/` | Indexed Job that runs any experiment file ([multi-pod design](docs/MultiPodSimulation.md)) | rarely |
-| `containers/Dockerfile.app` | One image for all experiments, installed from `uv.lock` | rarely |
+| `containers/` | `Dockerfile.isaaclab` (GPU training), `Dockerfile.app` (CPU smoke/CI), `Dockerfile.ros2` (robot side) | rarely |
 | `k8s/tests/` | Resume-smoke Job template used by kind e2e here and by infra's EKS recovery test | rarely |
 | `config/images.json` | The one shared GHCR namespace and which repository builds each image | rarely |
 | `tests/` | `unit/`, `dynamic/`, `compat/` (golden checkpoints), `experiments/` | with the code |
 
-Start here: [how to run and add experiments](docs/EXPERIMENTS.md).
+Start here: [how to run and add experiments](docs/EXPERIMENTS.md) · [training on Isaac Lab](docs/ISAACLAB.md) · [running a policy on the UR10 with ROS 2](docs/ROS2.md).
 
 ```bash
 pip install uv            # or see https://docs.astral.sh/uv/

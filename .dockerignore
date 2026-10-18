@@ -1,4 +1,4 @@
-# Only what the image needs.
+# Only what the images need.
 **
 !pyproject.toml
 !uv.lock
@@ -7,4 +7,7 @@
 !src/**
 !experiments/
 !experiments/**
+!ros2_ws/src/
+!ros2_ws/src/**
+!containers/ros2_entrypoint.sh
 **/__pycache__
