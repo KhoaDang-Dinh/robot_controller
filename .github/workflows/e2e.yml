@@ -54,11 +54,13 @@ jobs:
         run: |
           nohup uv run moto_server -H 0.0.0.0 -p "$EMULATOR_PORT" > moto.log 2>&1 &
           for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$EMULATOR_PORT/moto-api/" >/dev/null && break; sleep 1; done
+          curl -sf "http://127.0.0.1:$EMULATOR_PORT/moto-api/" >/dev/null || { cat moto.log; exit 1; }
           GATEWAY="$(docker network inspect kind -f '{{range .IPAM.Config}}{{if .Gateway}}{{.Gateway}} {{end}}{{end}}' | tr ' ' '\n' | grep -E '^[0-9.]+$' | head -1)"
           test -n "$GATEWAY"
           echo "POD_ENDPOINT=http://$GATEWAY:$EMULATOR_PORT" >> "$GITHUB_ENV"
       - name: Resume and fencing across Pod replacement
         run: |
+          set -o pipefail   # default `bash -e` would let tee hide a failing driver
           uv run python scripts/e2e_kind_recovery.py --image "$IMAGE" \
             --host-endpoint "http://127.0.0.1:$EMULATOR_PORT" \
             --pod-endpoint "$POD_ENDPOINT" --logs e2e-logs 2>&1 | tee e2e-driver.log
