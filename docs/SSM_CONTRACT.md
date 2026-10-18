@@ -58,3 +58,15 @@ After acceptance, run Stop dev EKS runtime to stop paid runtime resources. Terra
 kubernetes/v1; base/v1 stays. A partial/failed destroy may leave a parameter, so consumers
 always verify the live cluster instead of trusting presence. No new AWS resources were
 applied by this code change. Live acceptance requires configured AWS/EKS access.
+
+## Additive v1 fields
+
+`schema_version` stays 1. Consumers ignore keys they do not use.
+
+| Field | Parameter | Meaning |
+|---|---|---|
+| `container_registry` | base/v1, kubernetes/v1 | Shared GHCR namespace (`ghcr.io/khoadang-dinh`). It must equal `config/images.json` in both repositories. The runtime root refuses to publish kubernetes/v1 if it differs from base/v1, and `hello_ssm.py` refuses a contract that differs from robot_controller's config. |
+| `cost_allocation_tags` | base/v1 | Tag keys that are applied to every resource and used for cost grouping. |
+
+Order: reapply `dev/base` before the next runtime start so that base/v1 carries
+`container_registry`.

@@ -1,0 +1,5 @@
+# Only workloads/ and its requirements are copied into images.
+**
+!workloads/
+!workloads/**
+workloads/__pycache__

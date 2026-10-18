@@ -7,8 +7,16 @@ import subprocess
 import sys
 import tempfile
 
+IMAGES = Path(__file__).resolve().parents[1]/"config/images.json"
 
-def validate_contract(contract, region, project, environment, account, cluster):
+
+def expected_registry():
+    """Shared GHCR namespace this repository builds into (config/images.json)."""
+    return json.loads(IMAGES.read_text())["registry"]
+
+
+def validate_contract(contract, region, project, environment, account, cluster,
+                      registry=None):
     if contract.get("schema_version") != 1:
         raise ValueError("Unsupported platform contract schema")
     for field, expected in (("region", region), ("project", project),
@@ -25,6 +33,13 @@ def validate_contract(contract, region, project, environment, account, cluster):
                            ("cluster_endpoint", "endpoint")):
         if contract[source] != cluster.get(target):
             raise ValueError(f"Stale or incorrect cluster contract: {source}")
+    # Both repositories must push to and pull from the same GHCR namespace.
+    registry = registry or expected_registry()
+    if contract.get("container_registry") != registry:
+        raise ValueError(
+            "Contract container_registry does not match config/images.json "
+            f"({contract.get('container_registry')!r} != {registry!r}); "
+            "reapply infra eks-runtime or fix the registry in one repository")
 
 
 def main():
