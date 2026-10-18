@@ -1,0 +1,84 @@
+name: E2E (container + Kubernetes)
+# Dynamic testing of the real container images: build, scan the image with
+# Trivy, run it as a Kubernetes Job on a throwaway kind cluster against a local
+# AWS API emulator, and prove checkpoint resume + fencing across Pod
+# replacement. No AWS account, no GHCR push, no paid resources.
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kind-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      IMAGE: ghcr.io/khoadang-dinh/resume-smoke:e2e-${{ github.sha }}
+      EMULATOR_PORT: "5000"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned emulator and client
+        run: python -m pip install -r requirements-dev.txt
+      - name: Install pinned, checksum-verified Trivy
+        run: bash scripts/install_trivy.sh
+
+      - name: Build images
+        run: |
+          docker build --pull -f containers/Dockerfile.resume-smoke -t "$IMAGE" .
+          docker build --pull -f containers/Dockerfile.robot-sim-worker \
+            -t "ghcr.io/khoadang-dinh/robot-sim-worker:e2e-${GITHUB_SHA}" .
+      - name: Trivy image scan (fail on fixable HIGH/CRITICAL)
+        run: |
+          for image in "$IMAGE" "ghcr.io/khoadang-dinh/robot-sim-worker:e2e-${GITHUB_SHA}"; do
+            trivy image --scanners vuln,secret --ignorefile .trivyignore \
+              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$image"
+          done
+      - name: Container runs as non-root with a read-only root filesystem
+        run: |
+          test "$(docker run --rm --entrypoint id "$IMAGE" -u)" = "10001"
+          docker run --rm --read-only --entrypoint python "$IMAGE" -c "import checkpoint, telemetry, boto3"
+
+      - uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1.14.0
+        with:
+          cluster_name: e2e
+      - name: Load image into kind
+        run: kind load docker-image "$IMAGE" --name e2e
+      - name: Start AWS API emulator on the runner
+        run: |
+          nohup moto_server -H 0.0.0.0 -p "$EMULATOR_PORT" > moto.log 2>&1 &
+          for _ in $(seq 1 30); do curl -sf "http://127.0.0.1:$EMULATOR_PORT/moto-api/" >/dev/null && break; sleep 1; done
+          GATEWAY="$(docker network inspect kind -f '{{range .IPAM.Config}}{{if .Gateway}}{{.Gateway}} {{end}}{{end}}' | tr ' ' '\n' | grep -E '^[0-9.]+$' | head -1)"
+          test -n "$GATEWAY"
+          echo "POD_ENDPOINT=http://$GATEWAY:$EMULATOR_PORT" >> "$GITHUB_ENV"
+      - name: Resume and fencing across Pod replacement
+        run: |
+          python scripts/e2e_kind_recovery.py --image "$IMAGE" \
+            --host-endpoint "http://127.0.0.1:$EMULATOR_PORT" \
+            --pod-endpoint "$POD_ENDPOINT" --logs e2e-logs
+      - name: Usage report from Pod telemetry
+        if: always()
+        run: |
+          cat e2e-logs/*.jsonl 2>/dev/null | python scripts/usage_report.py --format markdown >> "$GITHUB_STEP_SUMMARY" || true
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get all -A || true
+          kubectl -n robot-platform describe pods || true
+          tail -n 100 moto.log || true
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: e2e-telemetry
+          path: e2e-logs/
+          retention-days: 14
+          if-no-files-found: ignore

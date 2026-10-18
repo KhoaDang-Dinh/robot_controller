@@ -4,6 +4,18 @@ Kubernetes workload repository for the robot thesis. See [static architecture, d
 behavior and branches](docs/BASELINE.md). Start with a CPU-only Job: no custom image,
 AWS credentials, GPU, service, ingress or persistent volume.
 
+| Path | Contents |
+|---|---|
+| `workloads/` | Checkpoint protocol, shard barrier, resume/indexed smoke workers, telemetry |
+| `containers/` | Workload Dockerfiles (non-root, pinned dependencies, OCI source label) |
+| `charts/robot-sim/` | Indexed multi-pod simulation Job ([multi-pod design](docs/MultiPodSimulation.md)) |
+| `k8s/tests/` | Resume-smoke Job template used by kind e2e here and by infra's EKS recovery test |
+| `config/images.json` | The one shared GHCR namespace and which repository builds each image |
+| `scripts/` | Hello World, SSM contract check, registry check, e2e driver, usage report |
+
+Checks: [security and testing](docs/SECURITY_CHECKS.md) ·
+[observability and cost analysis](docs/OBSERVABILITY_COST.md).
+
 ## Smallest run
 
 Prerequisites: Python 3.10+, kubectl, a reachable Kubernetes cluster with a Ready Linux

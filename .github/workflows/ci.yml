@@ -1,0 +1,80 @@
+name: CI
+# Unit, dynamic (process-level) and chart tests. No cloud credentials.
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pinned test dependencies
+        run: python -m pip install -r requirements-dev.txt
+      - name: Syntax
+        run: python -m compileall -q scripts workloads
+      - name: Shared GHCR registry
+        run: python scripts/check_registry.py
+      - name: Unit and dynamic tests (worker processes against a local AWS emulator)
+        run: python -m pytest -q -ra
+
+  helm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+        with:
+          version: v3.19.0
+      - name: Lint multi-pod chart
+        run: helm lint charts/robot-sim
+      - name: Render 4-shard / 2-GPU Pod Job with cost and telemetry labels
+        run: |
+          helm template smoke charts/robot-sim --namespace robot-platform \
+            --set enabled=true --set job.id=ci-multipod \
+            --set job.shards=4 --set job.parallelism=2 \
+            --set image.digest="$DIGEST" > /tmp/robot-sim-job.yaml
+          grep -q 'completionMode: Indexed' /tmp/robot-sim-job.yaml
+          grep -q 'parallelism: 2' /tmp/robot-sim-job.yaml
+          grep -q 'completions: 4' /tmp/robot-sim-job.yaml
+          grep -q 'robot-sim/cost-center: "thesis"' /tmp/robot-sim-job.yaml
+          grep -q 'robot-sim/experiment: "ci-multipod"' /tmp/robot-sim-job.yaml
+          grep -q 'fieldPath: spec.nodeName' /tmp/robot-sim-job.yaml
+          grep -q 'image: "ghcr.io/khoadang-dinh/robot-sim-worker@sha256:' /tmp/robot-sim-job.yaml
+      - name: Render synchronized Job
+        run: |
+          helm template smoke charts/robot-sim \
+            --set enabled=true --set job.id=sync-ci \
+            --set job.shards=2 --set job.parallelism=2 \
+            --set synchronization.enabled=true \
+            --set image.digest="$DIGEST" > /tmp/robot-sim-sync.yaml
+          grep -q 'name: SYNC_ENABLED' /tmp/robot-sim-sync.yaml
+      - name: Reject unsafe values
+        run: |
+          reject() {
+            if helm template smoke charts/robot-sim --set enabled=true --set job.id=ci "$@" >/dev/null 2>&1; then
+              echo "chart accepted: $*" >&2; exit 1
+            fi
+          }
+          reject                                                      # unpinned image
+          reject --set image.digest="$DIGEST" --set image.repository=docker.io/library/python
+          REGISTRY="$(python3 -c 'import json; print(json.load(open("config/images.json"))["registry"])')"
+          reject --set image.digest="$DIGEST" --set image.repository="${REGISTRY}-evil/robot-sim-worker"  # prefix lookalike
+          reject --set image.digest="$DIGEST" --set job.shards=2 --set job.parallelism=1 --set synchronization.enabled=true
+          reject --set image.digest="$DIGEST" --set cost.costCenter='bad value!'

@@ -59,9 +59,14 @@ Logs or Kubernetes Job completion alone are not evidence of checkpoint recovery.
 ### Implementation status and migration boundary
 
 This is the ownership target, not a claim that all six areas are implemented.
-The current robot_controller baseline has CPU Hello World and SSM discovery tests.
-The existing controller, Dockerfile, Helm chart, Argo Application and checkpoint helpers
+robot_controller now owns the CPU Hello World, SSM discovery tests, the checkpoint
+protocol, the resume/indexed smoke workers and their images, the robot-sim chart and
+the workload tests (unit, dynamic and kind e2e), plus SAST/SCA/image scanning.
+The existing controller service, its Dockerfile, Helm chart and Argo Application
 remain in infra_robot_sim until migrated with their build/promotion references and tests.
+infra keeps the EKS destroy/recreate/resume test because it exercises runtime lifecycle;
+it consumes the smoke image and Job template from robot_controller at a pinned ref.
+Both repositories use the GHCR namespace in config/images.json.
 Migrate application behavior; retain AWS infrastructure lifecycle handlers in infra.
 Preserve a single Argo owner during cutover and avoid pruning live resources accidentally.
 The existing stateless Hello World is not yet the required start/save/resume release test.

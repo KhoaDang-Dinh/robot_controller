@@ -1,0 +1,130 @@
+name: Security
+# Static analysis (SAST), third-party dependency analysis (SCA), secret and
+# configuration scanning. Results go to the job log, to GitHub code scanning
+# (SARIF) and, for the SBOM, to a workflow artifact. No cloud credentials.
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+  schedule:
+    # New CVEs are published against unchanged code: rescan weekly.
+    - cron: "17 2 * * 1"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  sast:
+    name: SAST (ruff security rules + Bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Ruff (correctness, bugbear, flake8-bandit)
+        run: ruff check --output-format=github .
+      - name: Bandit (fail on medium+ severity)
+        run: |
+          bandit -c pyproject.toml -r workloads scripts -f sarif -o bandit.sarif --exit-zero
+          bandit -c pyproject.toml -r workloads scripts --severity-level medium
+      - name: Upload Bandit results
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          sarif_file: bandit.sarif
+          category: bandit
+
+  codeql:
+    name: SAST (CodeQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          languages: python, actions
+          queries: security-extended
+      - uses: github/codeql-action/analyze@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          category: codeql
+
+  dependencies:
+    name: SCA (pip-audit + Trivy) and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install pip-audit
+        run: python -m pip install pip-audit==2.10.1
+      - name: pip-audit runtime dependencies (shipped in images)
+        run: pip-audit --strict -r workloads/requirements.txt
+      - name: pip-audit development and CI tools
+        run: pip-audit -r requirements-dev.txt
+      - name: Install pinned, checksum-verified Trivy
+        run: bash scripts/install_trivy.sh
+      - name: Trivy vulnerabilities, secrets and misconfigurations (repository)
+        run: |
+          trivy fs --scanners vuln,secret,misconfig --ignorefile .trivyignore \
+            --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 .
+      - name: Trivy Kubernetes misconfigurations (rendered chart)
+        run: |
+          trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
+            --helm-set enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            charts/robot-sim
+      - name: Trivy SARIF for code scanning
+        if: always()
+        run: |
+          trivy fs --scanners vuln,secret,misconfig --ignorefile .trivyignore \
+            --format sarif --output trivy-fs.sarif .
+      - name: Upload Trivy results
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@cee97f86b972a3ded3c58d04148362b193ddc518 # v4.38.3
+        with:
+          sarif_file: trivy-fs.sarif
+          category: trivy-fs
+      - name: CycloneDX SBOM of the repository's dependencies
+        if: always()
+        run: trivy fs --format cyclonedx --output sbom-repo.cdx.json .
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        if: always()
+        with:
+          name: sbom-repo
+          path: sbom-repo.cdx.json
+          retention-days: 30
+
+  dependency-review:
+    name: Dependency review (new dependencies in this PR)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
+          comment-summary-in-pr: on-failure
