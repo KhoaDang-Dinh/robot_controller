@@ -1,8 +1,10 @@
 version: 2
+# Updates go to dev (integration), like every other change; main is promoted from dev.
 updates:
   # uv.lock; uv's exclude-newer = "14 days" still applies when the lock is re-resolved.
   - package-ecosystem: uv
     directory: /
+    target-branch: dev
     schedule: {interval: weekly}
     open-pull-requests-limit: 5
     groups:
@@ -10,7 +12,15 @@ updates:
       dev-tools: {dependency-type: development}
   - package-ecosystem: docker
     directory: /containers
+    target-branch: dev
     schedule: {interval: weekly}
+    ignore:
+      # The interpreter is pinned to 3.12 (pyproject requires-python); move it deliberately.
+      - dependency-name: python
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule: {interval: weekly}
+    groups:
+      actions: {patterns: ["*"]}
