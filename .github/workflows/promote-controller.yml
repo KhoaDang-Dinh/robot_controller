@@ -1,0 +1,108 @@
+name: Promote controller digest to dev GitOps
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: Immutable GHCR digest (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  promote:
+    runs-on: [self-hosted, linux, x64, robot-sim-admin]
+    environment: dev
+    if: github.ref == 'refs/heads/dev'
+    steps:
+      - name: Discover dev deployment role from SSM
+        id: discovery
+        env:
+          AWS_REGION: ${{ vars.AWS_REGION }}
+        run: |
+          test -n "$AWS_REGION"
+          command -v aws
+          command -v python3
+          command -v kubectl
+          python3 - <<'PY'
+          import json, os, subprocess
+          region = os.environ['AWS_REGION']
+          def aws(*args):
+              return json.loads(subprocess.check_output(
+                  ['aws', '--region', region, '--no-cli-pager', *args, '--output', 'json'],
+                  text=True, timeout=60))
+          identity = aws('sts', 'get-caller-identity')
+          parameter = '/robot-sim/dev/access/robot-controller-deploy-role-arn'
+          role = aws('ssm', 'get-parameter', '--name', parameter)['Parameter']['Value']
+          partition = identity['Arn'].split(':')[1]
+          expected = f"arn:{partition}:iam::{identity['Account']}:role/robot-sim-dev-RobotControllerDeploy"
+          if role != expected:
+              raise SystemExit('Refusing unexpected role ARN from SSM')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'role_arn={role}\n')
+          print(f'Discovered dev deployment role from {parameter}')
+          PY
+      - name: Exchange runner identity for app dev role
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ steps.discovery.outputs.role_arn }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-chaining: true
+          role-duration-seconds: 3600
+          role-session-name: robot-controller-dev-${{ github.run_id }}
+      - name: Prevent metadata fallback and verify scoped identity
+        env:
+          DEV_DEPLOY_ROLE: ${{ steps.discovery.outputs.role_arn }}
+          AWS_EC2_METADATA_DISABLED: 'true'
+        run: |
+          echo 'AWS_EC2_METADATA_DISABLED=true' >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, subprocess
+          role = os.environ['DEV_DEPLOY_ROLE'].split(':')
+          identity = json.loads(subprocess.check_output(['aws', 'sts', 'get-caller-identity', '--output', 'json'], text=True))
+          expected = f"arn:{role[1]}:sts::{role[4]}:assumed-role/{role[5].split('/')[-1]}/"
+          if not identity['Arn'].startswith(expected):
+              raise SystemExit('Refusing deployment: unexpected AWS identity')
+          print('Verified scoped deployment role')
+          PY
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate digest and update dev values
+        env:
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+
+          digest = os.environ["DIGEST"]
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+              raise SystemExit("digest must be sha256:<64 lowercase hex>")
+
+          path = Path("k8s/charts/robot-controller/values-dev.yaml")
+          text = path.read_text()
+          text = text.replace("enabled: false", "enabled: true", 1)
+          text = re.sub(r'(?m)^  digest:.*$', f"  digest: {digest}", text)
+          if "imagePullSecrets:" not in text:
+              text += "\nimagePullSecrets:\n  - name: ghcr-pull\n"
+          path.write_text(text)
+          PY
+
+      - name: Open promotion PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ inputs.digest }}
+        run: |
+          gh auth setup-git
+          BRANCH="bot/promote-controller-${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add k8s/charts/robot-controller/values-dev.yaml
+          git commit -m "chore(gitops): promote controller $DIGEST"
+          git push origin "$BRANCH"
+          gh pr create             --base dev             --head "$BRANCH"             --title "Promote controller image to dev"             --body "Promotes robot-controller@${DIGEST} through GitOps after merge."

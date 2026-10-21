@@ -59,3 +59,10 @@ and environment configuration, release/rollback procedures, checkpoint compatibi
 and migrations, and start/save/resume release smoke tests.
 
 See [the ownership contract and migration status](docs/BASELINE.md#application-ownership-contract).
+
+
+## Controller ownership cutover
+
+The controller service/image, chart, workload Argo definition and promotion now belong
+to robot_controller. Follow its docs/RELEASE.md for coordinated merge order, GHCR package
+access, SSM-discovered runner role and rollback checks. Infra retains runtime lifecycle.

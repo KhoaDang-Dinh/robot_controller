@@ -1,0 +1,69 @@
+{{- if .Values.enabled }}
+{{- $digest := required "image.digest is required when controller is enabled" .Values.image.digest }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: robot-controller
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: robot-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: robot-controller
+        app.kubernetes.io/part-of: robot-sim
+        robot-sim/environment: {{ .Values.platform.environment | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: controller
+          image: "{{ .Values.image.repository }}@{{ $digest }}"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: IMAGE_DIGEST
+              value: {{ $digest | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: robot-controller
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: AWS_REGION
+              value: {{ .Values.aws.region | quote }}
+            - name: PLATFORM_PROJECT
+              value: {{ .Values.platform.project | quote }}
+            - name: PLATFORM_ENVIRONMENT
+              value: {{ .Values.platform.environment | quote }}
+            - name: CHECKPOINT_INTERVAL_SECONDS
+              value: {{ .Values.platform.checkpointIntervalSeconds | quote }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
+
