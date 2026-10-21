@@ -48,9 +48,15 @@ def render(generation: int, token: int, job_id: str, image: str, endpoint: str) 
     text = string.Template(TEMPLATE.read_text()).substitute(
         JOB_ID=job_id, RUNTIME_GENERATION=generation, FENCING_TOKEN=token,
         IMAGE_DIGEST="sha256:" + "0" * 64, GIT_REVISION=os.environ.get("GITHUB_SHA", "local"))
-    documents = json.loads(sh("kubectl", "create", "--dry-run=client", "-o", "json", "-f", "-",
-                              input_text=text))
-    items = documents["items"] if documents.get("kind") == "List" else [documents]
+    output = sh("kubectl", "create", "--dry-run=client", "-o", "json", "-f", "-", input_text=text)
+    # kubectl versions may print one List or consecutive JSON objects for YAML documents.
+    items = []
+    decoder = json.JSONDecoder()
+    remaining = output.lstrip()
+    while remaining:
+        document, end = decoder.raw_decode(remaining)
+        items.extend(document["items"] if document.get("kind") == "List" else [document])
+        remaining = remaining[end:].lstrip()
     for item in items:
         if item["kind"] != "Job":
             continue
@@ -189,3 +195,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
