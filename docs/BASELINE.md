@@ -21,11 +21,9 @@ flowchart TD
   J -. Later checkpoints .-> B
 ```
 
-Existing controller code, Helm chart and Argo CD Application still live in infra_robot_sim.
-This baseline does not move or duplicate that running controller. New workload ownership
-starts in robot_controller. Migrate the existing controller in a separate reviewed change,
-then change its Argo source once; never let two Applications own the same objects.
-The existing Argo Application still tracks infra_robot_sim/dev.
+The remaining controller service, image, Helm chart and workload Application move to
+robot_controller in this coordinated change. Infra bootstraps the existing Argo root
+against the app repository. Follow robot_controller/docs/RELEASE.md before cutover.
 
 ## Application ownership contract
 
@@ -62,8 +60,8 @@ This is the ownership target, not a claim that all six areas are implemented.
 robot_controller now owns the CPU Hello World, SSM discovery tests, the checkpoint
 protocol, the resume/indexed smoke workers and their images, the robot-sim chart and
 the workload tests (unit, dynamic and kind e2e), plus SAST/SCA/image scanning.
-The existing controller service, its Dockerfile, Helm chart and Argo Application
-remain in infra_robot_sim until migrated with their build/promotion references and tests.
+The controller service, Dockerfile, chart, workload Application and promotion workflow
+now live in robot_controller alongside the existing simulation workers and tests.
 infra keeps the EKS destroy/recreate/resume test because it exercises runtime lifecycle;
 it consumes the smoke image and Job template from robot_controller at a pinned ref.
 Both repositories use the GHCR namespace in config/images.json.
@@ -129,3 +127,4 @@ A new GHCR tag must not replace a running experiment. Pin production images by d
 | Recovery (next) | Replacement worker resumes committed progress | Multi-worker consistency |
 
 Real AWS and Kubernetes acceptance remains pending until run against configured infrastructure.
+

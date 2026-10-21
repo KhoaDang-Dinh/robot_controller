@@ -71,10 +71,7 @@ def main():
             "--kubeconfig", kubeconfig, "--alias", "robot-hello-ssm")
         env = {**os.environ, "KUBECONFIG": kubeconfig}
         kubectl = ["kubectl", "--context", "robot-hello-ssm", "--request-timeout=20s"]
-        namespace = {"apiVersion": "v1", "kind": "Namespace",
-                     "metadata": {"name": contract["hello_namespace"]}}
-        subprocess.run(kubectl + ["apply", "-f", "-"], input=json.dumps(namespace),
-                       text=True, env=env, check=True, timeout=60)
+        # Infra bootstrap creates the namespace; the app role has namespace-only access.
         # Non-secret resource discovery is materialized for future workloads.
         config = {"apiVersion": "v1", "kind": "ConfigMap",
                   "metadata": {"name": "robot-platform-contract", "namespace": contract["hello_namespace"]},
@@ -89,3 +86,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

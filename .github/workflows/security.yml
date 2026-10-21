@@ -10,10 +10,11 @@ on:
     # New CVEs are published against unchanged code: rescan weekly.
     - cron: "17 2 * * 1"
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: security-${{ github.ref }}
+  group: ${{ github.workflow }}-security-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   sast:
@@ -94,6 +95,11 @@ jobs:
           trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
             --helm-set enabled=true,job.id=ci,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
             charts/robot-sim
+      - name: Trivy controller chart
+        run: |
+          trivy config --ignorefile .trivyignore --severity MEDIUM,HIGH,CRITICAL --exit-code 1 \
+            --helm-set enabled=true,image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            k8s/charts/robot-controller
       - name: Trivy SARIF for code scanning
         if: always()
         run: |
@@ -128,3 +134,4 @@ jobs:
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
+

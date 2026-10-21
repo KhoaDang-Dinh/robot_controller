@@ -5,10 +5,11 @@ on:
   push:
     branches: [dev, main]
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-ci-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   python:
@@ -42,6 +43,10 @@ jobs:
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
         with:
           version: v3.19.0
+      - name: Lint and render controller
+        run: |
+          helm lint k8s/charts/robot-controller
+          helm template robot-controller k8s/charts/robot-controller --set enabled=true --set image.digest="$DIGEST" > /tmp/controller.yaml
       - name: Lint multi-pod chart
         run: helm lint charts/robot-sim
       - name: Render 4-shard / 2-GPU Pod Job with cost and telemetry labels
@@ -78,3 +83,4 @@ jobs:
           reject --set image.digest="$DIGEST" --set image.repository="${REGISTRY}-evil/robot-sim-worker"  # prefix lookalike
           reject --set image.digest="$DIGEST" --set job.shards=2 --set job.parallelism=1 --set synchronization.enabled=true
           reject --set image.digest="$DIGEST" --set cost.costCenter='bad value!'
+

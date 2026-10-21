@@ -1,0 +1,29 @@
+enabled: false
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/khoadang-dinh/robot-controller
+  digest: ""
+
+imagePullSecrets: []
+
+serviceAccount:
+  name: robot-controller
+
+aws:
+  region: ap-southeast-1
+
+platform:
+  project: robot-sim
+  environment: dev
+  checkpointIntervalSeconds: 600
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
