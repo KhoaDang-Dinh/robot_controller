@@ -1,6 +1,6 @@
 -r workloads/requirements.txt
 pytest==9.1.1
 moto[dynamodb,s3,ssm,sts,server]==5.2.3
-ruff==0.16.9
+ruff==0.17.1
 bandit[sarif]==1.9.4
 pip-audit==2.10.1
